@@ -1,0 +1,2 @@
+"""Name service scaffold."""
+

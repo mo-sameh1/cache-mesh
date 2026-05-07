@@ -1,0 +1,136 @@
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      SERVICE_ROLE: gateway
+    command: uvicorn services.gateway.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+    depends_on:
+      - name-service
+      - replica-a
+      - replica-b
+      - replica-c
+
+  name-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      SERVICE_ROLE: name-service
+      NAME_SERVICE_HOST: 0.0.0.0
+      NAME_SERVICE_PORT: 8100
+    command: uvicorn services.name_service.main:app --host 0.0.0.0 --port 8100
+    ports:
+      - "8100:8100"
+    volumes:
+      - .:/app
+
+  replica-a:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      SERVICE_ROLE: replica
+      REPLICA_ID: replica-a
+      REPLICA_HOST: 0.0.0.0
+      REPLICA_PORT: 8201
+      QDRANT_URL: http://qdrant-a:6333
+    command: uvicorn services.replica.main:app --host 0.0.0.0 --port 8201
+    ports:
+      - "8201:8201"
+    volumes:
+      - .:/app
+    depends_on:
+      - qdrant-a
+
+  replica-b:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      SERVICE_ROLE: replica
+      REPLICA_ID: replica-b
+      REPLICA_HOST: 0.0.0.0
+      REPLICA_PORT: 8202
+      QDRANT_URL: http://qdrant-b:6333
+    command: uvicorn services.replica.main:app --host 0.0.0.0 --port 8202
+    ports:
+      - "8202:8202"
+    volumes:
+      - .:/app
+    depends_on:
+      - qdrant-b
+
+  replica-c:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      SERVICE_ROLE: replica
+      REPLICA_ID: replica-c
+      REPLICA_HOST: 0.0.0.0
+      REPLICA_PORT: 8203
+      QDRANT_URL: http://qdrant-c:6333
+    command: uvicorn services.replica.main:app --host 0.0.0.0 --port 8203
+    ports:
+      - "8203:8203"
+    volumes:
+      - .:/app
+    depends_on:
+      - qdrant-c
+
+  inference-adapter:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      SERVICE_ROLE: inference-adapter
+    command: uvicorn services.inference_adapter.main:app --host 0.0.0.0 --port 8050
+    ports:
+      - "8050:8050"
+    volumes:
+      - .:/app
+
+  qdrant-a:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6334:6333"
+    volumes:
+      - qdrant_a_data:/qdrant/storage
+
+  qdrant-b:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6335:6333"
+    volumes:
+      - qdrant_b_data:/qdrant/storage
+
+  qdrant-c:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6336:6333"
+    volumes:
+      - qdrant_c_data:/qdrant/storage
+
+volumes:
+  qdrant_a_data:
+  qdrant_b_data:
+  qdrant_c_data:
+
