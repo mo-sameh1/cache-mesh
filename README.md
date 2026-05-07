@@ -104,14 +104,4 @@ uvicorn services.replica.main:app --reload --host 0.0.0.0 --port 8201
 - Replica services are configured as separate containers with per-service environment overrides.
 - Qdrant is provisioned as one local instance per replica using named volumes.
 
-## Suggested first GitHub push
-
-This repo is initialized locally only. When you are ready to push:
-
-```powershell
-git remote add origin <your-github-repo-url>
-git add .
-git commit -m "Bootstrap CacheMesh scaffold"
-git push -u origin main
-```
 
