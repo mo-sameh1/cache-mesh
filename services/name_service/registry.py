@@ -1,6 +1,3 @@
-from shared.protocol import placeholder_response
-
-
 class MembershipRegistry:
     """In-memory placeholder for membership and heartbeat tracking."""
 
@@ -9,29 +6,39 @@ class MembershipRegistry:
 
     def register(self, payload: dict) -> dict:
         replica_id = payload.get("replica_id", "unknown")
-        self.members[replica_id] = payload
-        return placeholder_response(
-            service="name-service",
-            action="register",
-            detail="Registration is stored in a placeholder in-memory map. Real liveness handling is still TODO.",
-            member=payload,
-        )
+        member = {**payload, "status": payload.get("status", "healthy")}
+        self.members[replica_id] = member
+        return {
+            "service": "name-service",
+            "action": "register",
+            "status": "placeholder",
+            "detail": "Registration is stored in memory. Real liveness handling is still TODO.",
+            "registered": True,
+            "member": member,
+        }
 
     def heartbeat(self, payload: dict) -> dict:
         replica_id = payload.get("replica_id", "unknown")
-        self.members.setdefault(replica_id, {}).update(payload)
-        return placeholder_response(
-            service="name-service",
-            action="heartbeat",
-            detail="Heartbeat tracking is scaffolded only. Suspect / unhealthy transitions are still TODO.",
-            member=payload,
+        member = self.members.setdefault(
+            replica_id,
+            {"replica_id": replica_id, "host": "unknown", "port": 0, "status": "unknown"},
         )
+        member.update(payload)
+        return {
+            "service": "name-service",
+            "action": "heartbeat",
+            "status": "placeholder",
+            "detail": "Heartbeat tracking is scaffolded. Suspect and unhealthy transitions are still TODO.",
+            "accepted": True,
+            "member": member,
+        }
 
     def list_members(self) -> dict:
-        return placeholder_response(
-            service="name-service",
-            action="members",
-            detail="Membership listing is scaffolded only. Returned values are from the placeholder in-memory map.",
-            members=self.members,
-        )
+        return {
+            "service": "name-service",
+            "action": "members",
+            "status": "placeholder",
+            "detail": "Membership listing uses the placeholder in-memory map.",
+            "members": list(self.members.values()),
+        }
 

@@ -1,31 +1,40 @@
-from shared.protocol import placeholder_response
-
-
 class GatewayService:
     """High-level placeholder for the API gateway workflow."""
 
     def query_cache(self, payload: dict) -> dict:
-        return placeholder_response(
-            service="gateway",
-            action="cache.query",
-            detail="Gateway query flow is scaffolded only. Real routing and read logic is still TODO.",
-            received=payload,
-        )
+        return {
+            "service": "gateway",
+            "action": "cache.query",
+            "status": "placeholder",
+            "detail": "Gateway query flow is scaffolded. Real replica routing is still TODO.",
+            "hit": False,
+            "response_text": None,
+            "model_id": payload["model_id"],
+            "selected_replica_id": None,
+            "score": None,
+            "cache_status": "not_checked",
+        }
 
     def write_cache(self, payload: dict) -> dict:
-        return placeholder_response(
-            service="gateway",
-            action="cache.write",
-            detail="Gateway miss-path write flow is scaffolded only. Real coordinator logic is still TODO.",
-            received=payload,
-        )
+        return {
+            "service": "gateway",
+            "action": "cache.write",
+            "status": "placeholder",
+            "detail": "Gateway write flow is scaffolded. Real fan-out or coordinator logic is still TODO.",
+            "stored": False,
+            "replica_id": None,
+            "model_id": payload["model_id"],
+            "lamport_ts": None,
+        }
 
     def arm_fault(self, replica_id: str, payload: dict) -> dict:
-        return placeholder_response(
-            service="gateway",
-            action="admin.faults",
-            detail="Gateway fault-injection flow is scaffolded only. Real forwarding to replicas is still TODO.",
-            replica_id=replica_id,
-            received=payload,
-        )
+        return {
+            "service": "gateway",
+            "action": "admin.faults",
+            "status": "placeholder",
+            "detail": "Gateway fault forwarding is scaffolded. Real replica call is still TODO.",
+            "accepted": False,
+            "target_replica_id": replica_id,
+            "active_fault": payload,
+        }
 

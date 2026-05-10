@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from shared.models import HealthResponse, InferRequest
+from shared.models import HealthResponse, InferRequest, InferResponse
 from services.inference_adapter.client import InferenceStubClient
 
 
@@ -13,7 +13,7 @@ def health() -> HealthResponse:
     return HealthResponse(service="inference-adapter", status="ok", detail="Inference adapter placeholder is running.")
 
 
-@router.post("/infer")
+@router.post("/infer", response_model=InferResponse)
 def infer(request: InferRequest) -> dict:
     return client.infer(request.model_dump())
 
