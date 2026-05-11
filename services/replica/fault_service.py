@@ -1,5 +1,4 @@
 from shared.faults import FaultController
-from shared.protocol import placeholder_response
 
 
 class ReplicaFaultService:
@@ -10,10 +9,13 @@ class ReplicaFaultService:
 
     def arm_fault(self, payload: dict) -> dict:
         self.controller.arm(payload)
-        return placeholder_response(
-            service="replica",
-            action="admin.faults",
-            detail="Fault injection is scaffolded only. Real pause / timeout behavior is still TODO.",
-            received=payload,
-        )
+        return {
+            "service": "replica",
+            "action": "admin.faults",
+            "status": "placeholder",
+            "detail": "Fault injection is scaffolded. Real pause or timeout behavior is still TODO.",
+            "accepted": True,
+            "target_replica_id": None,
+            "active_fault": payload,
+        }
 
