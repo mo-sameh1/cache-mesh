@@ -18,6 +18,7 @@ class AppSettings(BaseSettings):
     unhealthy_after_misses: int = 5
     fault_mode: str = "disabled"
     fault_duration_sec: int = 10
+    name_service_url: str = "http://name-service:8100"
     qdrant_collection: str = "cachemesh_entries"
     inference_adapter_url: str = "http://inference-adapter:8050"
 
@@ -61,7 +62,13 @@ class ReplicaSettings(AppSettings):
     replica_id: str = "replica-a"
     replica_host: str = "0.0.0.0"
     replica_port: int = 8201
+    replica_advertised_host: str = "replica-a"
+    replica_advertised_port: int | None = None
     qdrant_url: str = "http://qdrant-a:6333"
+
+    @property
+    def advertised_port(self) -> int:
+        return self.replica_advertised_port or self.replica_port
 
 
 class InferenceAdapterSettings(AppSettings):
