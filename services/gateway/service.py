@@ -1,5 +1,3 @@
-from urllib.parse import urlparse
-
 from services.gateway.clients import GatewayClientError, InferenceClient, NameServiceClient, ReplicaClient
 from services.gateway.config import get_settings
 
@@ -55,20 +53,23 @@ class GatewayService:
     def write_cache(self, payload: dict) -> dict:
         for replica in self._replica_targets():
             try:
-                return self.replica_client.write_cache(replica["url"], payload)
+                response = self.replica_client.write_cache(replica["url"], payload)
+                return self._write_response(
+                    payload,
+                    status="ok",
+                    detail="Gateway wrote cache entry through a replica.",
+                    stored=bool(response.get("stored")),
+                    replica_id=response.get("replica_id") or replica["replica_id"],
+                    lamport_ts=response.get("lamport_ts"),
+                )
             except GatewayClientError:
                 continue
 
-        return {
-            "service": "gateway",
-            "action": "cache.write",
-            "status": "unavailable",
-            "detail": "No usable replica was available for cache write.",
-            "stored": False,
-            "replica_id": None,
-            "model_id": payload["model_id"],
-            "lamport_ts": None,
-        }
+        return self._write_response(
+            payload,
+            status="unavailable",
+            detail="No usable replica was available for cache write.",
+        )
 
     def arm_fault(self, replica_id: str, payload: dict) -> dict:
         replica = self._replica_target_for_id(replica_id)
@@ -142,10 +143,7 @@ class GatewayService:
         member_targets = self._member_replica_targets()
         if member_targets is not None:
             return member_targets
-        return [
-            {"replica_id": self._replica_id_from_url(url), "url": url}
-            for url in self.settings.replica_urls
-        ]
+        return self.settings.replica_targets
 
     def _replica_target_for_id(self, replica_id: str) -> dict[str, str] | None:
         member_targets = self._member_replica_targets(healthy_only=False)
@@ -153,11 +151,10 @@ class GatewayService:
             for target in member_targets:
                 if target["replica_id"] == replica_id:
                     return target
-            return None
 
-        for url in self.settings.replica_urls:
-            if self._replica_id_from_url(url) == replica_id:
-                return {"replica_id": replica_id, "url": url}
+        for target in self.settings.replica_targets:
+            if target["replica_id"] == replica_id:
+                return target
         return None
 
     def _member_replica_targets(self, *, healthy_only: bool = True) -> list[dict[str, str]] | None:
@@ -211,7 +208,24 @@ class GatewayService:
             "cache_status": cache_status,
         }
 
-    def _replica_id_from_url(self, url: str) -> str:
-        hostname = urlparse(url).hostname
-        return hostname or url
+    def _write_response(
+        self,
+        payload: dict,
+        *,
+        status: str,
+        detail: str,
+        stored: bool = False,
+        replica_id: str | None = None,
+        lamport_ts: int | None = None,
+    ) -> dict:
+        return {
+            "service": "gateway",
+            "action": "cache.write",
+            "status": status,
+            "detail": detail,
+            "stored": stored,
+            "replica_id": replica_id,
+            "model_id": payload["model_id"],
+            "lamport_ts": lamport_ts,
+        }
 

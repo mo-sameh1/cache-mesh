@@ -26,11 +26,30 @@ class GatewaySettings(AppSettings):
     gateway_host: str = "0.0.0.0"
     gateway_port: int = 8000
     name_service_url: str = "http://name-service:8100"
+    gateway_replica_targets: str = (
+        "replica-a=http://replica-a:8201,"
+        "replica-b=http://replica-b:8202,"
+        "replica-c=http://replica-c:8203"
+    )
     gateway_replica_urls: str = "http://replica-a:8201,http://replica-b:8202,http://replica-c:8203"
 
     @property
     def replica_urls(self) -> list[str]:
         return [url.strip() for url in self.gateway_replica_urls.split(",") if url.strip()]
+
+    @property
+    def replica_targets(self) -> list[dict[str, str]]:
+        targets = []
+        for item in self.gateway_replica_targets.split(","):
+            if not item.strip():
+                continue
+            replica_id, url = item.split("=", 1)
+            targets.append({"replica_id": replica_id.strip(), "url": url.strip()})
+
+        if targets:
+            return targets
+
+        return [{"replica_id": url, "url": url} for url in self.replica_urls]
 
 
 class NameServiceSettings(AppSettings):

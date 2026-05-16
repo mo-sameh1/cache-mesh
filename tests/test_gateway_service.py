@@ -168,6 +168,8 @@ def test_write_cache_uses_first_available_replica() -> None:
 
     assert response["stored"] is True
     assert response["replica_id"] == "replica-a"
+    assert response["service"] == "gateway"
+    assert response["action"] == "cache.write"
 
 
 def test_arm_fault_forwards_to_fallback_replica(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -214,6 +216,38 @@ def test_arm_fault_returns_unavailable_when_forwarding_fails(monkeypatch: pytest
     assert response["accepted"] is False
     assert response["status"] == "unavailable"
     assert response["target_replica_id"] == "replica-a"
+
+
+def test_arm_fault_uses_fallback_when_members_do_not_include_target(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GATEWAY_REPLICA_TARGETS", "replica-b=http://replica-b:8202")
+    replica_client = FakeReplicaClient()
+    service = GatewayService(
+        name_service_client=FakeNameServiceClient([_member("replica-a", 8201)]),
+        replica_client=replica_client,
+        inference_client=FakeInferenceClient(),
+    )
+
+    response = service.arm_fault("replica-b", _fault_payload())
+
+    assert response["accepted"] is True
+    assert response["target_replica_id"] == "replica-b"
+    assert replica_client.fault_urls == ["http://replica-b:8202"]
+
+
+def test_arm_fault_supports_ip_based_fallback_targets(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GATEWAY_REPLICA_TARGETS", "replica-a=http://192.168.1.10:8201")
+    replica_client = FakeReplicaClient()
+    service = GatewayService(
+        name_service_client=FakeNameServiceClient([]),
+        replica_client=replica_client,
+        inference_client=FakeInferenceClient(),
+    )
+
+    response = service.arm_fault("replica-a", _fault_payload())
+
+    assert response["accepted"] is True
+    assert response["target_replica_id"] == "replica-a"
+    assert replica_client.fault_urls == ["http://192.168.1.10:8201"]
 
 
 def _member(replica_id: str, port: int) -> dict:
