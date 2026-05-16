@@ -25,6 +25,12 @@ class AppSettings(BaseSettings):
 class GatewaySettings(AppSettings):
     gateway_host: str = "0.0.0.0"
     gateway_port: int = 8000
+    name_service_url: str = "http://name-service:8100"
+    gateway_replica_urls: str = "http://replica-a:8201,http://replica-b:8202,http://replica-c:8203"
+
+    @property
+    def replica_urls(self) -> list[str]:
+        return [url.strip() for url in self.gateway_replica_urls.split(",") if url.strip()]
 
 
 class NameServiceSettings(AppSettings):
