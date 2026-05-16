@@ -18,4 +18,3 @@ class ReplicaFaultService:
             "target_replica_id": None,
             "active_fault": payload,
         }
-

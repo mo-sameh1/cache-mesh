@@ -1,26 +1,31 @@
+import time
+
+
 class SyncService:
-    """Placeholder for snapshot transfer and log replay."""
 
-    def snapshot(self, payload: dict) -> dict:
-        return {
-            "service": "replica",
-            "action": "sync.snapshot",
-            "status": "placeholder",
-            "detail": "Snapshot transfer is scaffolded. Real state serialization is still TODO.",
-            "accepted": False,
-            "replica_id": payload["replica_id"],
-            "since_lamport_ts": payload.get("since_lamport_ts"),
-            "snapshot_id": None,
+    def __init__(self):
+        self.snapshots = []
+
+    def save_snapshot(self, cache_data):
+        snapshot = {
+            "timestamp": time.time(),
+            "data": cache_data
         }
 
-    def replay(self, payload: dict) -> dict:
+        self.snapshots.append(snapshot)
+
         return {
-            "service": "replica",
-            "action": "sync.replay",
-            "status": "placeholder",
-            "detail": "Log replay is scaffolded. Real Lamport-ordered recovery is still TODO.",
-            "accepted": False,
-            "replica_id": payload["replica_id"],
-            "replayed_operations": 0,
+            "status": "snapshot saved",
+            "count": len(self.snapshots)
         }
 
+    def replay_snapshots(self):
+        return {
+            "snapshots": self.snapshots
+        }
+
+    def latest_snapshot(self):
+        if not self.snapshots:
+            return None
+
+        return self.snapshots[-1]
