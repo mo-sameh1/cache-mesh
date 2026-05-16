@@ -41,8 +41,14 @@ def test_gateway_replica_targets_from_environment(monkeypatch) -> None:
 def test_replica_settings_from_environment(monkeypatch) -> None:
     monkeypatch.setenv("REPLICA_ID", "replica-z")
     monkeypatch.setenv("REPLICA_PORT", "8299")
+    monkeypatch.setenv("REPLICA_ADVERTISED_HOST", "replica-z.local")
+    monkeypatch.setenv("REPLICA_ADVERTISED_PORT", "8399")
     settings = ReplicaSettings()
     assert settings.replica_id == "replica-z"
     assert settings.replica_port == 8299
+    assert settings.replica_advertised_host == "replica-z.local"
+    assert settings.advertised_port == 8399
     monkeypatch.delenv("REPLICA_ID", raising=False)
     monkeypatch.delenv("REPLICA_PORT", raising=False)
+    monkeypatch.delenv("REPLICA_ADVERTISED_HOST", raising=False)
+    monkeypatch.delenv("REPLICA_ADVERTISED_PORT", raising=False)
