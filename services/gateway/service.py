@@ -1,9 +1,11 @@
-from services.gateway.clients import InferenceClient, NameServiceClient, ReplicaClient
+from urllib.parse import urlparse
+
+from services.gateway.clients import GatewayClientError, InferenceClient, NameServiceClient, ReplicaClient
 from services.gateway.config import get_settings
 
 
 class GatewayService:
-    """High-level placeholder for the API gateway workflow."""
+    """Coordinates gateway calls to the other CacheMesh services."""
 
     def __init__(
         self,
@@ -23,25 +25,45 @@ class GatewayService:
         )
 
     def query_cache(self, payload: dict) -> dict:
-        return {
-            "service": "gateway",
-            "action": "cache.query",
-            "status": "placeholder",
-            "detail": "Gateway query flow is scaffolded. Real replica routing is still TODO.",
-            "hit": False,
-            "response_text": None,
-            "model_id": payload["model_id"],
-            "selected_replica_id": None,
-            "score": None,
-            "cache_status": "not_checked",
-        }
+        for replica in self._replica_targets():
+            try:
+                read_response = self.replica_client.read_cache(replica["url"], self._read_payload(payload))
+            except GatewayClientError:
+                continue
+
+            if read_response.get("hit"):
+                return self._query_response(
+                    payload,
+                    status="ok",
+                    detail="Cache hit returned by replica.",
+                    hit=True,
+                    response_text=read_response.get("response_text"),
+                    selected_replica_id=read_response.get("replica_id") or replica["replica_id"],
+                    score=read_response.get("score"),
+                    cache_status="hit",
+                )
+
+            return self._query_miss(payload, replica)
+
+        return self._query_response(
+            payload,
+            status="unavailable",
+            detail="No usable replica was available for cache query.",
+            cache_status="replicas_unavailable",
+        )
 
     def write_cache(self, payload: dict) -> dict:
+        for replica in self._replica_targets():
+            try:
+                return self.replica_client.write_cache(replica["url"], payload)
+            except GatewayClientError:
+                continue
+
         return {
             "service": "gateway",
             "action": "cache.write",
-            "status": "placeholder",
-            "detail": "Gateway write flow is scaffolded. Real fan-out or coordinator logic is still TODO.",
+            "status": "unavailable",
+            "detail": "No usable replica was available for cache write.",
             "stored": False,
             "replica_id": None,
             "model_id": payload["model_id"],
@@ -58,4 +80,105 @@ class GatewayService:
             "target_replica_id": replica_id,
             "active_fault": payload,
         }
+
+    def _query_miss(self, payload: dict, replica: dict[str, str]) -> dict:
+        try:
+            inference_response = self.inference_client.infer(
+                {"prompt": payload["prompt"], "model_id": payload["model_id"]}
+            )
+        except GatewayClientError:
+            return self._query_response(
+                payload,
+                status="unavailable",
+                detail="Cache miss occurred, but inference was unavailable.",
+                selected_replica_id=replica["replica_id"],
+                cache_status="inference_unavailable",
+            )
+
+        response_text = inference_response["response_text"]
+        write_payload = {
+            "prompt": payload["prompt"],
+            "response_text": response_text,
+            "model_id": payload["model_id"],
+        }
+        try:
+            self.replica_client.write_cache(replica["url"], write_payload)
+            cache_status = "miss_generated"
+            detail = "Cache miss generated through inference and write was attempted successfully."
+        except GatewayClientError:
+            cache_status = "miss_generated_write_failed"
+            detail = "Cache miss generated through inference, but cache write failed."
+
+        return self._query_response(
+            payload,
+            status="ok",
+            detail=detail,
+            response_text=response_text,
+            selected_replica_id=replica["replica_id"],
+            cache_status=cache_status,
+        )
+
+    def _replica_targets(self) -> list[dict[str, str]]:
+        member_targets = self._member_replica_targets()
+        if member_targets is not None:
+            return member_targets
+        return [
+            {"replica_id": self._replica_id_from_url(url), "url": url}
+            for url in self.settings.replica_urls
+        ]
+
+    def _member_replica_targets(self) -> list[dict[str, str]] | None:
+        try:
+            response = self.name_service_client.list_members()
+        except GatewayClientError:
+            return None
+
+        members = response.get("members", [])
+        if not members:
+            return None
+
+        return [
+            {
+                "replica_id": member["replica_id"],
+                "url": f"http://{member['host']}:{member['port']}",
+            }
+            for member in members
+            if member.get("status") == "healthy"
+        ]
+
+    def _read_payload(self, payload: dict) -> dict:
+        return {
+            "prompt": payload["prompt"],
+            "model_id": payload["model_id"],
+            "semantic_enabled": payload["semantic_enabled"],
+        }
+
+    def _query_response(
+        self,
+        payload: dict,
+        *,
+        status: str,
+        detail: str,
+        hit: bool = False,
+        response_text: str | None = None,
+        selected_replica_id: str | None = None,
+        score: float | None = None,
+        cache_status: str,
+    ) -> dict:
+        return {
+            "service": "gateway",
+            "action": "cache.query",
+            "status": status,
+            "detail": detail,
+            "hit": hit,
+            "response_text": response_text,
+            "model_id": payload["model_id"],
+            "selected_replica_id": selected_replica_id,
+            "score": score,
+            "cache_status": cache_status,
+        }
+
+    def _replica_id_from_url(self, url: str) -> str:
+        hostname = urlparse(url).hostname
+        return hostname or url
 
