@@ -1,7 +1,8 @@
 import httpx
 import pytest
 
-from services.gateway.clients import GatewayClientError, InferenceClient, NameServiceClient, ReplicaClient
+from services.gateway.clients import InferenceClient, NameServiceClient, ReplicaClient
+from shared.http_client import ServiceClientError
 
 
 def test_name_service_client_lists_members() -> None:
@@ -46,5 +47,5 @@ def test_client_raises_on_remote_error() -> None:
 
     client = ReplicaClient(2.0, transport=httpx.MockTransport(handler))
 
-    with pytest.raises(GatewayClientError):
+    with pytest.raises(ServiceClientError):
         client.read_cache("http://replica-a:8201", {"prompt": "hello"})

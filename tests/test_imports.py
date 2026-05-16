@@ -3,6 +3,7 @@ def test_shared_imports() -> None:
     import shared.config  # noqa: F401
     import shared.constants  # noqa: F401
     import shared.faults  # noqa: F401
+    import shared.http_client  # noqa: F401
     import shared.logging  # noqa: F401
     import shared.models  # noqa: F401
     import shared.protocol  # noqa: F401

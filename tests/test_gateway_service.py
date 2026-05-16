@@ -1,7 +1,7 @@
 import pytest
 
-from services.gateway.clients import GatewayClientError
 from services.gateway.service import GatewayService
+from shared.http_client import ServiceClientError
 
 
 class FakeNameServiceClient:
@@ -29,16 +29,16 @@ class FakeReplicaClient:
     def read_cache(self, replica_url: str, payload: dict) -> dict:
         self.read_urls.append(replica_url)
         if not self.read_responses:
-            raise GatewayClientError("read failed")
+            raise ServiceClientError("read failed")
         response = self.read_responses.pop(0)
         if response.get("raise"):
-            raise GatewayClientError("read failed")
+            raise ServiceClientError("read failed")
         return response
 
     def write_cache(self, replica_url: str, payload: dict) -> dict:
         self.write_urls.append(replica_url)
         if self.fail_write:
-            raise GatewayClientError("write failed")
+            raise ServiceClientError("write failed")
         return {
             "service": "replica",
             "action": "cache.write",
@@ -53,7 +53,7 @@ class FakeReplicaClient:
     def arm_fault(self, replica_url: str, payload: dict) -> dict:
         self.fault_urls.append(replica_url)
         if self.fail_fault:
-            raise GatewayClientError("fault failed")
+            raise ServiceClientError("fault failed")
         return {
             "service": "replica",
             "action": "admin.faults",

@@ -1,5 +1,6 @@
-from services.gateway.clients import GatewayClientError, InferenceClient, NameServiceClient, ReplicaClient
+from services.gateway.clients import InferenceClient, NameServiceClient, ReplicaClient
 from services.gateway.config import get_settings
+from shared.http_client import ServiceClientError
 
 
 class GatewayService:
@@ -26,7 +27,7 @@ class GatewayService:
         for replica in self._replica_targets():
             try:
                 read_response = self.replica_client.read_cache(replica["url"], self._read_payload(payload))
-            except GatewayClientError:
+            except ServiceClientError:
                 continue
 
             if read_response.get("hit"):
@@ -62,7 +63,7 @@ class GatewayService:
                     replica_id=response.get("replica_id") or replica["replica_id"],
                     lamport_ts=response.get("lamport_ts"),
                 )
-            except GatewayClientError:
+            except ServiceClientError:
                 continue
 
         return self._write_response(
@@ -82,7 +83,7 @@ class GatewayService:
 
         try:
             response = self.replica_client.arm_fault(replica["url"], payload)
-        except GatewayClientError:
+        except ServiceClientError:
             return self._fault_response(
                 replica_id,
                 payload,
@@ -107,7 +108,7 @@ class GatewayService:
             inference_response = self.inference_client.infer(
                 {"prompt": payload["prompt"], "model_id": payload["model_id"]}
             )
-        except GatewayClientError:
+        except ServiceClientError:
             return self._query_response(
                 payload,
                 status="unavailable",
@@ -126,7 +127,7 @@ class GatewayService:
             self.replica_client.write_cache(replica["url"], write_payload)
             cache_status = "miss_generated"
             detail = "Cache miss generated through inference and write was attempted successfully."
-        except GatewayClientError:
+        except ServiceClientError:
             cache_status = "miss_generated_write_failed"
             detail = "Cache miss generated through inference, but cache write failed."
 
@@ -160,7 +161,7 @@ class GatewayService:
     def _member_replica_targets(self, *, healthy_only: bool = True) -> list[dict[str, str]] | None:
         try:
             response = self.name_service_client.list_members()
-        except GatewayClientError:
+        except ServiceClientError:
             return None
 
         members = response.get("members", [])
