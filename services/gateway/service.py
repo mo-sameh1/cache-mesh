@@ -71,11 +71,31 @@ class GatewayService:
         }
 
     def arm_fault(self, replica_id: str, payload: dict) -> dict:
+        replica = self._replica_target_for_id(replica_id)
+        if replica is None:
+            return self._fault_response(
+                replica_id,
+                payload,
+                detail="Target replica was not found.",
+            )
+
+        try:
+            response = self.replica_client.arm_fault(replica["url"], payload)
+        except GatewayClientError:
+            return self._fault_response(
+                replica_id,
+                payload,
+                detail="Target replica was unavailable for fault forwarding.",
+            )
+
+        return {**response, "target_replica_id": response.get("target_replica_id") or replica_id}
+
+    def _fault_response(self, replica_id: str, payload: dict, *, detail: str) -> dict:
         return {
             "service": "gateway",
             "action": "admin.faults",
-            "status": "placeholder",
-            "detail": "Gateway fault forwarding is scaffolded. Real replica call is still TODO.",
+            "status": "unavailable",
+            "detail": detail,
             "accepted": False,
             "target_replica_id": replica_id,
             "active_fault": payload,
@@ -127,7 +147,20 @@ class GatewayService:
             for url in self.settings.replica_urls
         ]
 
-    def _member_replica_targets(self) -> list[dict[str, str]] | None:
+    def _replica_target_for_id(self, replica_id: str) -> dict[str, str] | None:
+        member_targets = self._member_replica_targets(healthy_only=False)
+        if member_targets is not None:
+            for target in member_targets:
+                if target["replica_id"] == replica_id:
+                    return target
+            return None
+
+        for url in self.settings.replica_urls:
+            if self._replica_id_from_url(url) == replica_id:
+                return {"replica_id": replica_id, "url": url}
+        return None
+
+    def _member_replica_targets(self, *, healthy_only: bool = True) -> list[dict[str, str]] | None:
         try:
             response = self.name_service_client.list_members()
         except GatewayClientError:
@@ -143,7 +176,7 @@ class GatewayService:
                 "url": f"http://{member['host']}:{member['port']}",
             }
             for member in members
-            if member.get("status") == "healthy"
+            if not healthy_only or member.get("status") == "healthy"
         ]
 
     def _read_payload(self, payload: dict) -> dict:

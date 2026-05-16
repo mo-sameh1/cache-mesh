@@ -13,11 +13,18 @@ class FakeNameServiceClient:
 
 
 class FakeReplicaClient:
-    def __init__(self, read_responses: list[dict] | None = None, fail_write: bool = False) -> None:
+    def __init__(
+        self,
+        read_responses: list[dict] | None = None,
+        fail_write: bool = False,
+        fail_fault: bool = False,
+    ) -> None:
         self.read_responses = read_responses or []
         self.fail_write = fail_write
+        self.fail_fault = fail_fault
         self.read_urls: list[str] = []
         self.write_urls: list[str] = []
+        self.fault_urls: list[str] = []
 
     def read_cache(self, replica_url: str, payload: dict) -> dict:
         self.read_urls.append(replica_url)
@@ -44,7 +51,18 @@ class FakeReplicaClient:
         }
 
     def arm_fault(self, replica_url: str, payload: dict) -> dict:
-        raise AssertionError("fault forwarding is covered in its own checkpoint")
+        self.fault_urls.append(replica_url)
+        if self.fail_fault:
+            raise GatewayClientError("fault failed")
+        return {
+            "service": "replica",
+            "action": "admin.faults",
+            "status": "placeholder",
+            "detail": "fault armed",
+            "accepted": True,
+            "target_replica_id": None,
+            "active_fault": payload,
+        }
 
 
 class FakeInferenceClient:
@@ -152,9 +170,59 @@ def test_write_cache_uses_first_available_replica() -> None:
     assert response["replica_id"] == "replica-a"
 
 
+def test_arm_fault_forwards_to_fallback_replica(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GATEWAY_REPLICA_URLS", "http://replica-a:8201")
+    replica_client = FakeReplicaClient()
+    service = GatewayService(
+        name_service_client=FakeNameServiceClient([]),
+        replica_client=replica_client,
+        inference_client=FakeInferenceClient(),
+    )
+
+    response = service.arm_fault("replica-a", _fault_payload())
+
+    assert response["accepted"] is True
+    assert response["target_replica_id"] == "replica-a"
+    assert replica_client.fault_urls == ["http://replica-a:8201"]
+
+
+def test_arm_fault_returns_unavailable_for_unknown_replica(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GATEWAY_REPLICA_URLS", "http://replica-a:8201")
+    service = GatewayService(
+        name_service_client=FakeNameServiceClient([]),
+        replica_client=FakeReplicaClient(),
+        inference_client=FakeInferenceClient(),
+    )
+
+    response = service.arm_fault("replica-z", _fault_payload())
+
+    assert response["accepted"] is False
+    assert response["status"] == "unavailable"
+    assert response["target_replica_id"] == "replica-z"
+
+
+def test_arm_fault_returns_unavailable_when_forwarding_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GATEWAY_REPLICA_URLS", "http://replica-a:8201")
+    service = GatewayService(
+        name_service_client=FakeNameServiceClient([]),
+        replica_client=FakeReplicaClient(fail_fault=True),
+        inference_client=FakeInferenceClient(),
+    )
+
+    response = service.arm_fault("replica-a", _fault_payload())
+
+    assert response["accepted"] is False
+    assert response["status"] == "unavailable"
+    assert response["target_replica_id"] == "replica-a"
+
+
 def _member(replica_id: str, port: int) -> dict:
     return {"replica_id": replica_id, "host": replica_id, "port": port, "status": "healthy"}
 
 
 def _query_payload() -> dict:
     return {"prompt": "hello", "model_id": "demo", "semantic_enabled": True}
+
+
+def _fault_payload() -> dict:
+    return {"mode": "pause_node", "duration_sec": 10, "once": True}
