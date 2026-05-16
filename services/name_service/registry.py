@@ -1,44 +1,48 @@
+import time
+from shared.clock import LamportClock
+
 class MembershipRegistry:
-    """In-memory placeholder for membership and heartbeat tracking."""
+    def __init__(self):
+        self.members={}
+        self.clock=LamportClock()
+        self.suspect_timeout=10
+        self.unhealthy_timeout=20
 
-    def __init__(self) -> None:
-        self.members: dict[str, dict] = {}
-
-    def register(self, payload: dict) -> dict:
-        replica_id = payload.get("replica_id", "unknown")
-        member = {**payload, "status": payload.get("status", "healthy")}
-        self.members[replica_id] = member
-        return {
-            "service": "name-service",
-            "action": "register",
-            "status": "placeholder",
-            "detail": "Registration is stored in memory. Real liveness handling is still TODO.",
-            "registered": True,
-            "member": member,
+    def register(self,payload):
+        rid=payload["replica_id"]
+        self.members[rid]={
+            "replica_id":rid,
+            "host":payload["host"],
+            "port":payload["port"],
+            "status":"healthy",
+            "last_heartbeat":time.time(),
+            "lamport":self.clock.tick()
         }
+        return {"registered":True,"member":self.members[rid]}
 
-    def heartbeat(self, payload: dict) -> dict:
-        replica_id = payload.get("replica_id", "unknown")
-        member = self.members.setdefault(
-            replica_id,
-            {"replica_id": replica_id, "host": "unknown", "port": 0, "status": "unknown"},
-        )
-        member.update(payload)
-        return {
-            "service": "name-service",
-            "action": "heartbeat",
-            "status": "placeholder",
-            "detail": "Heartbeat tracking is scaffolded. Suspect and unhealthy transitions are still TODO.",
-            "accepted": True,
-            "member": member,
-        }
+    def heartbeat(self,payload):
+        rid=payload["replica_id"]
+        if rid in self.members:
+            self.members[rid]["last_heartbeat"]=time.time()
+            self.members[rid]["status"]="healthy"
+            self.members[rid]["lamport"]=self.clock.tick()
+        return {"accepted": rid in self.members}
 
-    def list_members(self) -> dict:
-        return {
-            "service": "name-service",
-            "action": "members",
-            "status": "placeholder",
-            "detail": "Membership listing uses the placeholder in-memory map.",
-            "members": list(self.members.values()),
-        }
+    def _refresh(self):
+        now=time.time()
+        for m in self.members.values():
+            diff=now-m["last_heartbeat"]
+            if diff>self.unhealthy_timeout:
+                m["status"]="unhealthy"
+            elif diff>self.suspect_timeout:
+                m["status"]="suspect"
+            else:
+                m["status"]="healthy"
 
+    def members_list(self):
+        self._refresh()
+        return list(self.members.values())
+
+    def healthy_members(self):
+        self._refresh()
+        return [m for m in self.members.values() if m["status"]=="healthy"]

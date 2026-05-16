@@ -1,21 +1,26 @@
-from shared.faults import FaultController
+import time
+from shared.faults import FAULTS
 
 
-class ReplicaFaultService:
-    """Placeholder for fault injection behavior on a replica."""
+class FaultService:
 
-    def __init__(self) -> None:
-        self.controller = FaultController()
+    @staticmethod
+    def apply_faults():
+        """
+        Simulates distributed system failures.
+        """
 
-    def arm_fault(self, payload: dict) -> dict:
-        self.controller.arm(payload)
+        if FAULTS["drop_heartbeat"]:
+            return {
+                "fault": "heartbeat dropped"
+            }
+
+        if FAULTS["pause_replica"]:
+            time.sleep(10)
+
+        if FAULTS["delay_seconds"] > 0:
+            time.sleep(FAULTS["delay_seconds"])
+
         return {
-            "service": "replica",
-            "action": "admin.faults",
-            "status": "placeholder",
-            "detail": "Fault injection is scaffolded. Real pause or timeout behavior is still TODO.",
-            "accepted": True,
-            "target_replica_id": None,
-            "active_fault": payload,
+            "fault": "none"
         }
-
