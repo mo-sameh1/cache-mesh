@@ -184,6 +184,9 @@ def test_arm_fault_forwards_to_fallback_replica(monkeypatch: pytest.MonkeyPatch)
     response = service.arm_fault("replica-a", _fault_payload())
 
     assert response["accepted"] is True
+    assert response["service"] == "gateway"
+    assert response["action"] == "admin.faults"
+    assert response["status"] == "ok"
     assert response["target_replica_id"] == "replica-a"
     assert replica_client.fault_urls == ["http://replica-a:8201"]
 

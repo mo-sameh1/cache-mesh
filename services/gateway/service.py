@@ -90,15 +90,29 @@ class GatewayService:
                 detail="Target replica was unavailable for fault forwarding.",
             )
 
-        return {**response, "target_replica_id": response.get("target_replica_id") or replica_id}
+        return self._fault_response(
+            replica_id,
+            response.get("active_fault") or payload,
+            status="ok",
+            detail="Gateway forwarded fault request to replica.",
+            accepted=bool(response.get("accepted")),
+        )
 
-    def _fault_response(self, replica_id: str, payload: dict, *, detail: str) -> dict:
+    def _fault_response(
+        self,
+        replica_id: str,
+        payload: dict,
+        *,
+        detail: str,
+        status: str = "unavailable",
+        accepted: bool = False,
+    ) -> dict:
         return {
             "service": "gateway",
             "action": "admin.faults",
-            "status": "unavailable",
+            "status": status,
             "detail": detail,
-            "accepted": False,
+            "accepted": accepted,
             "target_replica_id": replica_id,
             "active_fault": payload,
         }
