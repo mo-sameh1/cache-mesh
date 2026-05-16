@@ -177,6 +177,28 @@ Request: `InferRequest`
 
 Response: `InferResponse`
 
+### `POST /infer/stream`
+
+Request: `InferRequest`
+
+Streaming response: `text/event-stream`
+
+- `token` events stream generated text chunks.
+- `done` events carry the final aggregated response payload as JSON.
+- `error` events report runtime failures without changing the request body shape.
+
+### Inference Runtime Settings
+
+The inference service may use these environment variables without changing the request or response contracts:
+
+- `INFERENCE_BACKEND`
+- `INFERENCE_MODEL_ID`
+- `INFERENCE_MAX_NEW_TOKENS`
+- `INFERENCE_TEMPERATURE`
+- `INFERENCE_TOP_P`
+- `INFERENCE_LOAD_IN_4BIT`
+- `INFERENCE_DEVICE`
+
 ## Fault Injection
 
 ### Gateway: `POST /admin/faults/{replica_id}`

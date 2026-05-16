@@ -154,9 +154,16 @@ def test_replica_routes() -> None:
 
 
 def test_inference_adapter_routes() -> None:
-    client = TestClient(create_inference_adapter_app())
-    assert client.get("/health").status_code == 200
+    with TestClient(create_inference_adapter_app()) as client:
+        assert client.get("/health").status_code == 200
 
-    infer_response = client.post("/infer", json={"prompt": "hello"})
-    assert infer_response.status_code == 200
-    assert infer_response.json()["response_text"] == "placeholder inference response"
+        infer_response = client.post("/infer", json={"prompt": "hello"})
+        assert infer_response.status_code == 200
+        assert infer_response.json()["response_text"] == "stub inference response"
+
+        with client.stream("POST", "/infer/stream", json={"prompt": "hello"}) as stream_response:
+            body = "".join(stream_response.iter_text())
+
+        assert stream_response.status_code == 200
+        assert "event: token" in body
+        assert "event: done" in body
