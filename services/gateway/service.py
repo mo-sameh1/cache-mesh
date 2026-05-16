@@ -1,5 +1,26 @@
+from services.gateway.clients import InferenceClient, NameServiceClient, ReplicaClient
+from services.gateway.config import get_settings
+
+
 class GatewayService:
     """High-level placeholder for the API gateway workflow."""
+
+    def __init__(
+        self,
+        name_service_client: NameServiceClient | None = None,
+        replica_client: ReplicaClient | None = None,
+        inference_client: InferenceClient | None = None,
+    ) -> None:
+        self.settings = get_settings()
+        self.name_service_client = name_service_client or NameServiceClient(
+            self.settings.name_service_url,
+            self.settings.request_timeout_sec,
+        )
+        self.replica_client = replica_client or ReplicaClient(self.settings.request_timeout_sec)
+        self.inference_client = inference_client or InferenceClient(
+            self.settings.inference_adapter_url,
+            self.settings.request_timeout_sec,
+        )
 
     def query_cache(self, payload: dict) -> dict:
         return {
