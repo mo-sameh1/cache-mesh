@@ -16,4 +16,5 @@ build/
 Thumbs.db
 docker-data/
 qdrant-data/
+*.pdf
 
