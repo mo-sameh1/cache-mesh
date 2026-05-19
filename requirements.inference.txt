@@ -1,6 +1,0 @@
--r requirements.txt
-accelerate>=1.1.0
-bitsandbytes>=0.45.0
-safetensors>=0.4.5
-sentencepiece>=0.2.0
-transformers>=4.45.0
