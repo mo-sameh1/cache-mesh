@@ -1,85 +1,110 @@
 from dataclasses import dataclass
-from threading import Lock
+from typing import Protocol
 
 from services.replica.config import get_settings
+from services.replica.embedding import SentenceTransformerEmbedder
+from services.replica.vector_store import StoredCacheEntry, VectorStoreAdapter
 from shared.config import ReplicaSettings
-from shared.clock import LamportClock
+
+
+class Embedder(Protocol):
+    @property
+    def vector_size(self) -> int: ...
+
+    def embed(self, text: str) -> list[float]: ...
 
 
 @dataclass
-class CacheEntry:
-    prompt: str
-    response_text: str
-    model_id: str
+class CacheWriteResult:
     lamport_ts: int
+    vector: list[float]
 
 
 class CacheService:
-    """In-memory exact-match cache for the first replica milestone."""
+    """Local replica cache behavior backed by Qdrant persistence."""
 
     def __init__(
         self,
         settings: ReplicaSettings | None = None,
-        clock: LamportClock | None = None,
+        vector_store: VectorStoreAdapter | None = None,
+        embedder: Embedder | None = None,
     ) -> None:
         self.settings = settings or get_settings()
-        self.clock = clock or LamportClock()
-        self._entries: dict[tuple[str, str], CacheEntry] = {}
-        self._lock = Lock()
+        self.embedder = embedder or SentenceTransformerEmbedder(settings=self.settings)
+        self.vector_store = vector_store or VectorStoreAdapter(
+            settings=self.settings,
+            vector_size=self.embedder.vector_size,
+        )
 
     def read(self, payload: dict) -> dict:
-        with self._lock:
-            entry = self._entries.get(self._key(payload["prompt"], payload["model_id"]))
-        if entry is None:
-            return {
-                "service": "replica",
-                "action": "cache.read",
-                "status": "ok",
-                "detail": "No exact in-memory cache entry found on this replica.",
-                "hit": False,
-                "response_text": None,
-                "replica_id": self.settings.replica_id,
-                "model_id": payload["model_id"],
-                "score": None,
-            }
+        exact = self.vector_store.find_exact(payload["prompt"], payload["model_id"])
+        if exact is not None:
+            return self._hit_response(
+                exact,
+                detail="Exact cache hit returned by this replica.",
+                score=1.0,
+            )
+
+        if payload.get("semantic_enabled", True):
+            query_vector = self.embedder.embed(payload["prompt"])
+            semantic = self.vector_store.find_semantic(
+                model_id=payload["model_id"],
+                vector=query_vector,
+                threshold=self.settings.semantic_score_threshold,
+            )
+            if semantic is not None:
+                return self._hit_response(
+                    semantic,
+                    detail="Semantic cache hit returned by this replica.",
+                    score=semantic.score,
+                )
 
         return {
             "service": "replica",
             "action": "cache.read",
             "status": "ok",
-            "detail": "Exact in-memory cache hit returned by this replica.",
+            "detail": "No cache entry matched this prompt on the replica.",
+            "hit": False,
+            "response_text": None,
+            "replica_id": self.settings.replica_id,
+            "model_id": payload["model_id"],
+            "score": None,
+        }
+
+    def prepare_vector(self, prompt: str) -> list[float]:
+        return self.embedder.embed(prompt)
+
+    def apply_write(
+        self,
+        payload: dict,
+        *,
+        lamport_ts: int,
+        vector: list[float] | None = None,
+        replica_origin: str | None = None,
+    ) -> CacheWriteResult:
+        resolved_vector = vector or self.prepare_vector(payload["prompt"])
+        self.vector_store.upsert_entry(
+            prompt=payload["prompt"],
+            response_text=payload["response_text"],
+            model_id=payload["model_id"],
+            lamport_ts=lamport_ts,
+            vector=resolved_vector,
+            replica_origin=replica_origin or self.settings.replica_id,
+        )
+        return CacheWriteResult(lamport_ts=lamport_ts, vector=resolved_vector)
+
+    def size(self) -> int:
+        return self.vector_store.count_entries()
+
+    def _hit_response(self, entry: StoredCacheEntry, *, detail: str, score: float | None) -> dict:
+        return {
+            "service": "replica",
+            "action": "cache.read",
+            "status": "ok",
+            "detail": detail,
             "hit": True,
             "response_text": entry.response_text,
             "replica_id": self.settings.replica_id,
             "model_id": entry.model_id,
-            "score": 1.0,
+            "score": score,
         }
-
-    def write(self, payload: dict) -> dict:
-        with self._lock:
-            lamport_ts = self.clock.tick()
-            self._entries[self._key(payload["prompt"], payload["model_id"])] = CacheEntry(
-                prompt=payload["prompt"],
-                response_text=payload["response_text"],
-                model_id=payload["model_id"],
-                lamport_ts=lamport_ts,
-            )
-
-        return {
-            "service": "replica",
-            "action": "cache.write",
-            "status": "ok",
-            "detail": "Exact in-memory cache entry stored on this replica.",
-            "stored": True,
-            "replica_id": self.settings.replica_id,
-            "model_id": payload["model_id"],
-            "lamport_ts": lamport_ts,
-        }
-
-    def size(self) -> int:
-        return len(self._entries)
-
-    @staticmethod
-    def _key(prompt: str, model_id: str) -> tuple[str, str]:
-        return prompt, model_id
-
