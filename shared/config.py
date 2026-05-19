@@ -65,10 +65,29 @@ class ReplicaSettings(AppSettings):
     replica_advertised_host: str = "replica-a"
     replica_advertised_port: int | None = None
     qdrant_url: str = "http://qdrant-a:6333"
+    replica_peer_targets: str = (
+        "replica-a=http://replica-a:8201,"
+        "replica-b=http://replica-b:8202,"
+        "replica-c=http://replica-c:8203"
+    )
+    initial_token_replica_id: str = "replica-a"
+    semantic_embedding_model_id: str = "sentence-transformers/all-MiniLM-L6-v2"
+    semantic_vector_size: int = 384
+    semantic_score_threshold: float = 0.72
 
     @property
     def advertised_port(self) -> int:
         return self.replica_advertised_port or self.replica_port
+
+    @property
+    def peer_targets(self) -> list[dict[str, str]]:
+        targets = []
+        for item in self.replica_peer_targets.split(","):
+            if not item.strip():
+                continue
+            replica_id, url = item.split("=", 1)
+            targets.append({"replica_id": replica_id.strip(), "url": url.strip()})
+        return targets
 
 
 class InferenceAdapterSettings(AppSettings):

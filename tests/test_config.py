@@ -43,12 +43,23 @@ def test_replica_settings_from_environment(monkeypatch) -> None:
     monkeypatch.setenv("REPLICA_PORT", "8299")
     monkeypatch.setenv("REPLICA_ADVERTISED_HOST", "replica-z.local")
     monkeypatch.setenv("REPLICA_ADVERTISED_PORT", "8399")
+    monkeypatch.setenv("REPLICA_PEER_TARGETS", "replica-z=http://replica-z:8299, replica-y=http://replica-y:8298")
+    monkeypatch.setenv("INITIAL_TOKEN_REPLICA_ID", "replica-y")
     settings = ReplicaSettings()
     assert settings.replica_id == "replica-z"
     assert settings.replica_port == 8299
     assert settings.replica_advertised_host == "replica-z.local"
     assert settings.advertised_port == 8399
+    assert settings.semantic_embedding_model_id == "sentence-transformers/all-MiniLM-L6-v2"
+    assert settings.semantic_vector_size == 384
+    assert settings.initial_token_replica_id == "replica-y"
+    assert settings.peer_targets == [
+        {"replica_id": "replica-z", "url": "http://replica-z:8299"},
+        {"replica_id": "replica-y", "url": "http://replica-y:8298"},
+    ]
     monkeypatch.delenv("REPLICA_ID", raising=False)
     monkeypatch.delenv("REPLICA_PORT", raising=False)
     monkeypatch.delenv("REPLICA_ADVERTISED_HOST", raising=False)
     monkeypatch.delenv("REPLICA_ADVERTISED_PORT", raising=False)
+    monkeypatch.delenv("REPLICA_PEER_TARGETS", raising=False)
+    monkeypatch.delenv("INITIAL_TOKEN_REPLICA_ID", raising=False)

@@ -13,5 +13,7 @@ def test_service_imports() -> None:
     import services.gateway.main  # noqa: F401
     import services.inference_adapter.main  # noqa: F401
     import services.name_service.main  # noqa: F401
+    import services.replica.embedding  # noqa: F401
+    import services.replica.internal_models  # noqa: F401
     import services.replica.main  # noqa: F401
 

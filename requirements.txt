@@ -5,6 +5,6 @@ pydantic-settings
 httpx
 python-dotenv
 qdrant-client
+sentence-transformers
 pytest
 ruff
-

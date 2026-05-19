@@ -55,10 +55,11 @@ class GatewayService:
         for replica in self._replica_targets():
             try:
                 response = self.replica_client.write_cache(replica["url"], payload)
+                gateway_status, detail = self._write_forwarding_result(response)
                 return self._write_response(
                     payload,
-                    status="ok",
-                    detail="Gateway wrote cache entry through a replica.",
+                    status=gateway_status,
+                    detail=detail,
                     stored=bool(response.get("stored")),
                     replica_id=response.get("replica_id") or replica["replica_id"],
                     lamport_ts=response.get("lamport_ts"),
@@ -138,16 +139,34 @@ class GatewayService:
             "model_id": payload["model_id"],
         }
         try:
-            self.replica_client.write_cache(replica["url"], write_payload)
-            cache_status = "miss_generated"
-            detail = "Cache miss generated through inference and write was attempted successfully."
+            write_response = self.replica_client.write_cache(replica["url"], write_payload)
+            write_status = write_response.get("status")
+            if write_status == "degraded":
+                cache_status = "miss_generated_write_degraded"
+                detail = (
+                    "Cache miss generated through inference, but distributed cache replication degraded "
+                    "during the write."
+                )
+                status = "degraded"
+            elif write_status == "unavailable":
+                cache_status = "miss_generated_write_unavailable"
+                detail = (
+                    "Cache miss generated through inference, but the replica reported the cache write "
+                    "as unavailable."
+                )
+                status = "unavailable"
+            else:
+                cache_status = "miss_generated"
+                detail = "Cache miss generated through inference and write was attempted successfully."
+                status = "ok"
         except ServiceClientError:
             cache_status = "miss_generated_write_failed"
             detail = "Cache miss generated through inference, but cache write failed."
+            status = "ok"
 
         return self._query_response(
             payload,
-            status="ok",
+            status=status,
             detail=detail,
             response_text=response_text,
             selected_replica_id=replica["replica_id"],
@@ -243,4 +262,21 @@ class GatewayService:
             "model_id": payload["model_id"],
             "lamport_ts": lamport_ts,
         }
+
+    def _write_forwarding_result(self, replica_response: dict) -> tuple[str, str]:
+        replica_status = replica_response.get("status")
+        if replica_status == "degraded":
+            return (
+                "degraded",
+                "Gateway wrote cache entry through a replica, but distributed replication degraded.",
+            )
+        if replica_status == "unavailable":
+            return (
+                "unavailable",
+                "Gateway could not complete the cache write because the replica reported it unavailable.",
+            )
+        return (
+            "ok",
+            "Gateway wrote cache entry through a replica.",
+        )
 
