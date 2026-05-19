@@ -60,6 +60,45 @@ class DirectReplicaPeerClient:
         return manager
 
 
+class FailingReplicationPeerClient(DirectReplicaPeerClient):
+    def __init__(self, network: dict[str, ReplicaManager], failing_replica_url: str) -> None:
+        super().__init__(network)
+        self.failing_replica_url = failing_replica_url
+
+    def replicate_write(self, replica_url: str, payload: dict) -> dict:
+        if replica_url == self.failing_replica_url:
+            raise ReplicaPeerClientError(f"replication failed for {replica_url}")
+        return super().replicate_write(replica_url, payload)
+
+
+class TimeoutAfterRemoteWriteStartedPeerClient(DirectReplicaPeerClient):
+    def __init__(self, network: dict[str, ReplicaManager], failing_replica_url: str) -> None:
+        super().__init__(network)
+        self.failing_replica_url = failing_replica_url
+        self._raised = False
+
+    def mark_write_started(self, replica_url: str, payload: dict) -> dict:
+        response = super().mark_write_started(replica_url, payload)
+        if replica_url == self.failing_replica_url and not self._raised:
+            self._raised = True
+            raise ReplicaPeerClientError(f"timed out after starting remote write on {replica_url}")
+        return response
+
+
+class LostTokenTransferResponsePeerClient(DirectReplicaPeerClient):
+    def __init__(self, network: dict[str, ReplicaManager], failing_replica_url: str) -> None:
+        super().__init__(network)
+        self.failing_replica_url = failing_replica_url
+        self._raised = False
+
+    def transfer_token(self, replica_url: str, payload: dict) -> dict:
+        response = super().transfer_token(replica_url, payload)
+        if replica_url == self.failing_replica_url and not self._raised:
+            self._raised = True
+            raise ReplicaPeerClientError(f"lost token transfer response for {replica_url}")
+        return response
+
+
 def test_replica_registers_on_startup() -> None:
     name_service = RecordingNameServiceClient()
     manager = _build_manager(name_service_client=name_service)
@@ -261,6 +300,125 @@ def test_read_waits_for_remote_write_and_returns_hit_after_replication() -> None
     assert reader_result["response"]["hit"] is True
     assert reader_result["response"]["response_text"] == "written before read returns"
     assert elapsed >= 0.2
+
+
+def test_replication_failure_after_local_write_reports_degraded_but_origin_keeps_value() -> None:
+    network: dict[str, ReplicaManager] = {}
+    peer_client = FailingReplicationPeerClient(network, "http://replica-b:8202")
+    manager_a = _build_manager(
+        settings=_settings(
+            "replica-a",
+            8201,
+            peer_targets="replica-a=http://replica-a:8201,replica-b=http://replica-b:8202",
+        ),
+        peer_client=peer_client,
+    )
+    manager_b = _build_manager(
+        settings=_settings(
+            "replica-b",
+            8202,
+            peer_targets="replica-a=http://replica-a:8201,replica-b=http://replica-b:8202",
+        ),
+        peer_client=DirectReplicaPeerClient(network),
+    )
+    network.update(
+        {
+            "http://replica-a:8201": manager_a,
+            "http://replica-b:8202": manager_b,
+        }
+    )
+
+    response = manager_a.write_cache(
+        {"prompt": "partial replication", "response_text": "origin keeps value", "model_id": "demo"}
+    )
+    origin_hit = manager_a.read_cache(
+        {"prompt": "partial replication", "model_id": "demo", "semantic_enabled": True}
+    )
+    peer_hit = manager_b.read_cache(
+        {"prompt": "partial replication", "model_id": "demo", "semantic_enabled": True}
+    )
+
+    assert response["status"] == "degraded"
+    assert response["stored"] is True
+    assert origin_hit["hit"] is True
+    assert origin_hit["response_text"] == "origin keeps value"
+    assert peer_hit["hit"] is False
+
+
+def test_failed_mark_write_started_still_releases_remote_writer_state() -> None:
+    network: dict[str, ReplicaManager] = {}
+    peer_client = TimeoutAfterRemoteWriteStartedPeerClient(network, "http://replica-b:8202")
+    manager_a = _build_manager(
+        settings=_settings(
+            "replica-a",
+            8201,
+            peer_targets="replica-a=http://replica-a:8201,replica-b=http://replica-b:8202",
+        ),
+        peer_client=peer_client,
+    )
+    manager_b = _build_manager(
+        settings=_settings(
+            "replica-b",
+            8202,
+            peer_targets="replica-a=http://replica-a:8201,replica-b=http://replica-b:8202",
+        ),
+        peer_client=DirectReplicaPeerClient(network),
+    )
+    network.update(
+        {
+            "http://replica-a:8201": manager_a,
+            "http://replica-b:8202": manager_b,
+        }
+    )
+
+    response = manager_a.write_cache(
+        {"prompt": "start timeout", "response_text": "should not persist", "model_id": "demo"}
+    )
+    start = time.monotonic()
+    read_response = manager_b.read_cache(
+        {"prompt": "start timeout", "model_id": "demo", "semantic_enabled": True}
+    )
+    elapsed = time.monotonic() - start
+
+    assert response["status"] == "unavailable"
+    assert response["stored"] is False
+    assert read_response["hit"] is False
+    assert elapsed < 1.0
+
+
+def test_lost_token_transfer_response_does_not_leave_both_replicas_holding_token() -> None:
+    network: dict[str, ReplicaManager] = {}
+    manager_a = _build_manager(
+        settings=_settings(
+            "replica-a",
+            8201,
+            peer_targets="replica-a=http://replica-a:8201,replica-b=http://replica-b:8202",
+        ),
+        peer_client=LostTokenTransferResponsePeerClient(network, "http://replica-b:8202"),
+    )
+    manager_b = _build_manager(
+        settings=_settings(
+            "replica-b",
+            8202,
+            peer_targets="replica-a=http://replica-a:8201,replica-b=http://replica-b:8202",
+        ),
+        peer_client=DirectReplicaPeerClient(network),
+    )
+    network.update(
+        {
+            "http://replica-a:8201": manager_a,
+            "http://replica-b:8202": manager_b,
+        }
+    )
+
+    response = manager_b.write_cache(
+        {"prompt": "token handoff", "response_text": "may fail before write", "model_id": "demo"}
+    )
+
+    assert response["status"] == "ok"
+    assert response["stored"] is True
+    assert manager_a.coordinator.has_token is False
+    assert manager_b.coordinator.has_token is True
 
 
 def test_token_can_move_multiple_times_between_replicas() -> None:

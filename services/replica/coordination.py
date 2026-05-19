@@ -10,6 +10,7 @@ from shared.clock import LamportClock
 class TokenState:
     last_granted: dict[str, int]
     queue: list[str] = field(default_factory=list)
+    version: int = 0
 
 
 class RicartAgrawalaTokenCoordinator:
@@ -43,9 +44,13 @@ class RicartAgrawalaTokenCoordinator:
         self._requesting_local = False
         self._local_request_seq = 0
         self._has_token = replica_id == initial_token_holder
+        self._token_version_seen = 0
         self._token: TokenState | None = None
         if self._has_token:
-            self._token = TokenState(last_granted={replica: 0 for replica in self.replica_ids})
+            self._token = TokenState(
+                last_granted={replica: 0 for replica in self.replica_ids},
+                version=0,
+            )
 
     @contextmanager
     def read_guard(self) -> Iterator[None]:
@@ -98,14 +103,38 @@ class RicartAgrawalaTokenCoordinator:
         *,
         last_granted: dict[str, int],
         queue: list[str],
+        version: int,
     ) -> dict[str, int | bool | str]:
         with self._condition:
+            if version < self._token_version_seen:
+                return {
+                    "accepted": False,
+                    "stale": True,
+                    "holder_replica_id": self.replica_id,
+                    "from_replica_id": from_replica_id,
+                }
+            if version == self._token_version_seen:
+                if self._has_token and self._token is not None and self._token.version == version:
+                    return {
+                        "accepted": True,
+                        "holder_replica_id": self.replica_id,
+                        "from_replica_id": from_replica_id,
+                    }
+                return {
+                    "accepted": False,
+                    "stale": True,
+                    "holder_replica_id": self.replica_id,
+                    "from_replica_id": from_replica_id,
+                }
+
             self._has_token = True
+            self._token_version_seen = version
             normalized_last_granted = {replica: 0 for replica in self.replica_ids}
             normalized_last_granted.update(last_granted)
             self._token = TokenState(
                 last_granted=normalized_last_granted,
                 queue=[replica for replica in queue if replica != self.replica_id],
+                version=version,
             )
             self._condition.notify_all()
             return {
@@ -161,17 +190,20 @@ class RicartAgrawalaTokenCoordinator:
             if not self._has_token or self._token is None:
                 raise RuntimeError("Cannot transfer a token that is not held locally.")
             queue = [replica for replica in self._token.queue if replica != recipient_id]
+            version = self._token.version + 1
             return {
                 "last_granted": dict(self._token.last_granted),
                 "queue": queue,
+                "version": version,
             }
 
-    def mark_token_sent(self, recipient_id: str) -> None:
+    def mark_token_sent(self, recipient_id: str, version: int) -> None:
         with self._condition:
             if self._token is not None:
                 self._token.queue = [replica for replica in self._token.queue if replica != recipient_id]
             self._has_token = False
             self._token = None
+            self._token_version_seen = max(self._token_version_seen, version)
             self._condition.notify_all()
 
     def mark_remote_write_started(self, replica_id: str, lamport_ts: int) -> dict[str, int | bool]:

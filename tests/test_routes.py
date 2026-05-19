@@ -135,7 +135,12 @@ def test_replica_routes() -> None:
 
         token_transfer_response = client.post(
             "/internal/mutex/transfer-token",
-            json={"from_replica_id": "replica-b", "last_granted": {"replica-a": 0, "replica-b": 0}, "queue": []},
+            json={
+                "from_replica_id": "replica-b",
+                "last_granted": {"replica-a": 0, "replica-b": 0},
+                "queue": [],
+                "version": 1,
+            },
         )
         assert token_transfer_response.status_code == 200
         assert token_transfer_response.json()["accepted"] is True

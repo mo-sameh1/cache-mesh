@@ -63,6 +63,7 @@ class ReplicaManager:
             initial_token_holder=self.settings.initial_token_replica_id,
         )
         self.write_delay_hook = write_delay_hook
+        self._pending_token_transfer: tuple[str, dict[str, object]] | None = None
         self._heartbeat_task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
 
@@ -98,6 +99,7 @@ class ReplicaManager:
         peers = self._peer_targets()
         started_peers: list[dict[str, str]] = []
         write_started = False
+        local_write_applied = False
         lamport_ts: int | None = None
         try:
             if self.coordinator.should_broadcast_request():
@@ -111,17 +113,18 @@ class ReplicaManager:
             lamport_ts = self.clock.tick()
             write_started = True
             for peer in peers:
+                started_peers.append(peer)
                 self.peer_client.mark_write_started(
                     peer["url"],
                     {"replica_id": self.settings.replica_id, "lamport_ts": lamport_ts},
                 )
-                started_peers.append(peer)
 
             result = self.cache_service.apply_write(
                 payload,
                 lamport_ts=lamport_ts,
                 replica_origin=self.settings.replica_id,
             )
+            local_write_applied = True
             if self.write_delay_hook is not None:
                 self.write_delay_hook(payload)
 
@@ -143,6 +146,17 @@ class ReplicaManager:
             )
         except (ReplicaPeerClientError, Exception) as exc:
             logger.exception("Distributed cache write failed: %s", exc)
+            if local_write_applied:
+                return self._write_response(
+                    status="degraded",
+                    detail=(
+                        "Cache entry stored locally, but distributed replication did not "
+                        f"complete successfully: {exc}"
+                    ),
+                    stored=True,
+                    model_id=payload["model_id"],
+                    lamport_ts=lamport_ts,
+                )
             return self._write_response(
                 status="unavailable",
                 detail=f"Distributed cache write failed: {exc}",
@@ -180,6 +194,7 @@ class ReplicaManager:
             payload["from_replica_id"],
             last_granted=payload["last_granted"],
             queue=payload["queue"],
+            version=payload["version"],
         )
         self._pass_token_if_needed()
         return response
@@ -251,21 +266,35 @@ class ReplicaManager:
                 logger.warning("Could not release remote writer state on %s: %s", peer["replica_id"], exc)
 
     def _pass_token_if_needed(self) -> None:
-        recipient_id = self.coordinator.next_token_recipient()
-        if recipient_id is None:
-            return
+        if self._pending_token_transfer is None:
+            recipient_id = self.coordinator.next_token_recipient()
+            if recipient_id is None:
+                return
+            target = self._peer_target_by_id(recipient_id)
+            if target is None:
+                logger.warning("Token recipient %s is not in the configured peer targets.", recipient_id)
+                return
+            payload = {
+                "from_replica_id": self.settings.replica_id,
+                **self.coordinator.export_token_for_transfer(recipient_id),
+            }
+            self.coordinator.mark_token_sent(recipient_id, int(payload["version"]))
+            self._pending_token_transfer = (recipient_id, payload)
 
+        recipient_id, payload = self._pending_token_transfer
         target = self._peer_target_by_id(recipient_id)
         if target is None:
-            logger.warning("Token recipient %s is not in the configured peer targets.", recipient_id)
+            logger.warning("Pending token recipient %s is not in the configured peer targets.", recipient_id)
             return
 
-        payload = {
-            "from_replica_id": self.settings.replica_id,
-            **self.coordinator.export_token_for_transfer(recipient_id),
-        }
-        self.peer_client.transfer_token(target["url"], payload)
-        self.coordinator.mark_token_sent(recipient_id)
+        try:
+            response = self.peer_client.transfer_token(target["url"], payload)
+        except ReplicaPeerClientError as exc:
+            logger.warning("Could not complete token transfer to %s: %s", recipient_id, exc)
+            return
+
+        if response.get("accepted") or response.get("stale"):
+            self._pending_token_transfer = None
 
     def _peer_target_by_id(self, replica_id: str) -> dict[str, str] | None:
         for target in self.settings.peer_targets:
