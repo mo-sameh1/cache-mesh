@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import Callable
+from uuid import uuid4
 
 from services.replica.cache_service import CacheService
 from services.replica.clients import (
@@ -101,6 +102,7 @@ class ReplicaManager:
         write_started = False
         local_write_applied = False
         lamport_ts: int | None = None
+        write_id = str(uuid4())
         try:
             if self.coordinator.should_broadcast_request():
                 for peer in peers:
@@ -116,7 +118,11 @@ class ReplicaManager:
                 started_peers.append(peer)
                 self.peer_client.mark_write_started(
                     peer["url"],
-                    {"replica_id": self.settings.replica_id, "lamport_ts": lamport_ts},
+                    {
+                        "replica_id": self.settings.replica_id,
+                        "lamport_ts": lamport_ts,
+                        "write_id": write_id,
+                    },
                 )
 
             result = self.cache_service.apply_write(
@@ -165,7 +171,7 @@ class ReplicaManager:
                 lamport_ts=lamport_ts,
             )
         finally:
-            self._release_remote_writers(started_peers)
+            self._release_remote_writers(started_peers, write_id)
             if write_started:
                 self.coordinator.finish_local_write(request_seq)
             else:
@@ -200,7 +206,11 @@ class ReplicaManager:
         return response
 
     def mark_internal_write_started(self, payload: dict) -> dict:
-        return self.coordinator.mark_remote_write_started(payload["replica_id"], payload["lamport_ts"])
+        return self.coordinator.mark_remote_write_started(
+            payload["replica_id"],
+            payload["lamport_ts"],
+            payload["write_id"],
+        )
 
     def apply_replicated_write(self, payload: dict) -> dict:
         self.clock.update(payload["lamport_ts"])
@@ -219,7 +229,7 @@ class ReplicaManager:
         )
 
     def mark_internal_write_finished(self, payload: dict) -> dict:
-        return self.coordinator.mark_remote_write_finished(payload["replica_id"])
+        return self.coordinator.mark_remote_write_finished(payload["replica_id"], payload["write_id"])
 
     async def _register(self) -> None:
         payload = {
@@ -255,12 +265,12 @@ class ReplicaManager:
             if target["replica_id"] != self.settings.replica_id
         ]
 
-    def _release_remote_writers(self, peers: list[dict[str, str]]) -> None:
+    def _release_remote_writers(self, peers: list[dict[str, str]], write_id: str) -> None:
         for peer in reversed(peers):
             try:
                 self.peer_client.mark_write_finished(
                     peer["url"],
-                    {"replica_id": self.settings.replica_id},
+                    {"replica_id": self.settings.replica_id, "write_id": write_id},
                 )
             except ReplicaPeerClientError as exc:
                 logger.warning("Could not release remote writer state on %s: %s", peer["replica_id"], exc)

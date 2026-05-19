@@ -147,7 +147,7 @@ def test_replica_routes() -> None:
 
         release_response = client.post(
             "/internal/locks/write-finished",
-            json={"replica_id": "replica-b"},
+            json={"replica_id": "replica-b", "write_id": "write-1"},
         )
         assert release_response.status_code == 200
         assert release_response.json()["accepted"] is True

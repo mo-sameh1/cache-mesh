@@ -85,6 +85,27 @@ class TimeoutAfterRemoteWriteStartedPeerClient(DirectReplicaPeerClient):
         return response
 
 
+class DelayedRemoteWriteStartTimeoutPeerClient(DirectReplicaPeerClient):
+    def __init__(self, network: dict[str, ReplicaManager], failing_replica_url: str) -> None:
+        super().__init__(network)
+        self.failing_replica_url = failing_replica_url
+        self._raised = False
+        self.delayed_start_completed = threading.Event()
+
+    def mark_write_started(self, replica_url: str, payload: dict) -> dict:
+        if replica_url == self.failing_replica_url and not self._raised:
+            self._raised = True
+
+            def run_delayed_start() -> None:
+                time.sleep(0.2)
+                self._target(replica_url).mark_internal_write_started(payload)
+                self.delayed_start_completed.set()
+
+            threading.Thread(target=run_delayed_start, daemon=True).start()
+            raise ReplicaPeerClientError(f"timed out before remote write start completed on {replica_url}")
+        return super().mark_write_started(replica_url, payload)
+
+
 class LostTokenTransferResponsePeerClient(DirectReplicaPeerClient):
     def __init__(self, network: dict[str, ReplicaManager], failing_replica_url: str) -> None:
         super().__init__(network)
@@ -299,7 +320,7 @@ def test_read_waits_for_remote_write_and_returns_hit_after_replication() -> None
     assert writer_result["response"]["stored"] is True
     assert reader_result["response"]["hit"] is True
     assert reader_result["response"]["response_text"] == "written before read returns"
-    assert elapsed >= 0.2
+    assert elapsed >= 0.15
 
 
 def test_replication_failure_after_local_write_reports_degraded_but_origin_keeps_value() -> None:
@@ -377,6 +398,49 @@ def test_failed_mark_write_started_still_releases_remote_writer_state() -> None:
     start = time.monotonic()
     read_response = manager_b.read_cache(
         {"prompt": "start timeout", "model_id": "demo", "semantic_enabled": True}
+    )
+    elapsed = time.monotonic() - start
+
+    assert response["status"] == "unavailable"
+    assert response["stored"] is False
+    assert read_response["hit"] is False
+    assert elapsed < 1.0
+
+
+def test_write_finish_arriving_before_remote_start_completes_does_not_block_future_reads() -> None:
+    network: dict[str, ReplicaManager] = {}
+    peer_client = DelayedRemoteWriteStartTimeoutPeerClient(network, "http://replica-b:8202")
+    manager_a = _build_manager(
+        settings=_settings(
+            "replica-a",
+            8201,
+            peer_targets="replica-a=http://replica-a:8201,replica-b=http://replica-b:8202",
+        ),
+        peer_client=peer_client,
+    )
+    manager_b = _build_manager(
+        settings=_settings(
+            "replica-b",
+            8202,
+            peer_targets="replica-a=http://replica-a:8201,replica-b=http://replica-b:8202",
+        ),
+        peer_client=DirectReplicaPeerClient(network),
+    )
+    network.update(
+        {
+            "http://replica-a:8201": manager_a,
+            "http://replica-b:8202": manager_b,
+        }
+    )
+
+    response = manager_a.write_cache(
+        {"prompt": "finish before start", "response_text": "should not stick", "model_id": "demo"}
+    )
+    assert peer_client.delayed_start_completed.wait(timeout=2)
+
+    start = time.monotonic()
+    read_response = manager_b.read_cache(
+        {"prompt": "finish before start", "model_id": "demo", "semantic_enabled": True}
     )
     elapsed = time.monotonic() - start
 

@@ -40,6 +40,9 @@ class RicartAgrawalaTokenCoordinator:
         self._active_readers = 0
         self._local_write_active = False
         self._remote_writers: set[str] = set()
+        self._remote_writer_ids: dict[str, str] = {}
+        self._finished_remote_write_ids: set[str] = set()
+        self._finished_remote_write_order: list[str] = []
         self._request_numbers = {replica: 0 for replica in self.replica_ids}
         self._requesting_local = False
         self._local_request_seq = 0
@@ -206,21 +209,31 @@ class RicartAgrawalaTokenCoordinator:
             self._token_version_seen = max(self._token_version_seen, version)
             self._condition.notify_all()
 
-    def mark_remote_write_started(self, replica_id: str, lamport_ts: int) -> dict[str, int | bool]:
+    def mark_remote_write_started(self, replica_id: str, lamport_ts: int, write_id: str) -> dict[str, int | bool]:
         with self._condition:
             self.clock.update(lamport_ts)
             while self._active_readers > 0 or self._local_write_active:
                 self._condition.wait()
+            if write_id in self._finished_remote_write_ids:
+                self._forget_finished_remote_write_locked(write_id)
+                self._condition.notify_all()
+                return {
+                    "accepted": True,
+                    "lamport_ts": self.clock.tick(),
+                }
             self._remote_writers.add(replica_id)
+            self._remote_writer_ids[write_id] = replica_id
             self._condition.notify_all()
             return {
                 "accepted": True,
                 "lamport_ts": self.clock.tick(),
             }
 
-    def mark_remote_write_finished(self, replica_id: str) -> dict[str, bool]:
+    def mark_remote_write_finished(self, replica_id: str, write_id: str) -> dict[str, bool]:
         with self._condition:
-            self._remote_writers.discard(replica_id)
+            active_replica_id = self._remote_writer_ids.pop(write_id, None)
+            self._remember_finished_remote_write_locked(write_id)
+            self._remote_writers.discard(active_replica_id or replica_id)
             self._condition.notify_all()
             return {"accepted": True}
 
@@ -239,3 +252,22 @@ class RicartAgrawalaTokenCoordinator:
 
         for _, replica_id in sorted(eligible):
             self._token.queue.append(replica_id)
+
+    def _remember_finished_remote_write_locked(self, write_id: str) -> None:
+        if write_id in self._finished_remote_write_ids:
+            return
+        self._finished_remote_write_ids.add(write_id)
+        self._finished_remote_write_order.append(write_id)
+        max_finished = 256
+        while len(self._finished_remote_write_order) > max_finished:
+            expired = self._finished_remote_write_order.pop(0)
+            self._finished_remote_write_ids.discard(expired)
+
+    def _forget_finished_remote_write_locked(self, write_id: str) -> None:
+        if write_id not in self._finished_remote_write_ids:
+            return
+        self._finished_remote_write_ids.discard(write_id)
+        try:
+            self._finished_remote_write_order.remove(write_id)
+        except ValueError:
+            pass

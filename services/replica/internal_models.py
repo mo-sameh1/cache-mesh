@@ -18,10 +18,12 @@ class InternalTokenTransferRequest(BaseModel):
 class InternalWriteStateRequest(BaseModel):
     replica_id: str
     lamport_ts: int
+    write_id: str
 
 
 class InternalWriteFinishedRequest(BaseModel):
     replica_id: str
+    write_id: str
 
 
 class InternalReplicatedWriteRequest(CacheWriteRequest):
