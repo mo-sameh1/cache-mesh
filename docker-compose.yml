@@ -103,11 +103,15 @@ services:
   inference-adapter:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.inference
     env_file:
       - .env
     environment:
       SERVICE_ROLE: inference-adapter
+      INFERENCE_BACKEND: hf_transformers
+      INFERENCE_MODEL_ID: Qwen/Qwen2.5-7B-Instruct
+      INFERENCE_LOAD_IN_4BIT: "true"
+      INFERENCE_DEVICE: auto
     command: uvicorn services.inference_adapter.main:app --host 0.0.0.0 --port 8050
     ports:
       - "8050:8050"

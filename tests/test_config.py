@@ -1,4 +1,4 @@
-from shared.config import GatewaySettings, ReplicaSettings
+from shared.config import GatewaySettings, InferenceAdapterSettings, ReplicaSettings
 
 
 def test_gateway_settings_defaults() -> None:
@@ -63,3 +63,10 @@ def test_replica_settings_from_environment(monkeypatch) -> None:
     monkeypatch.delenv("REPLICA_ADVERTISED_PORT", raising=False)
     monkeypatch.delenv("REPLICA_PEER_TARGETS", raising=False)
     monkeypatch.delenv("INITIAL_TOKEN_REPLICA_ID", raising=False)
+
+
+def test_inference_settings_defaults() -> None:
+    settings = InferenceAdapterSettings()
+    assert settings.inference_backend == "stub"
+    assert settings.inference_model_id == "Qwen/Qwen2.5-7B-Instruct"
+    assert settings.inference_load_in_4bit is True

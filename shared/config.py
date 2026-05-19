@@ -93,4 +93,11 @@ class ReplicaSettings(AppSettings):
 class InferenceAdapterSettings(AppSettings):
     adapter_host: str = "0.0.0.0"
     adapter_port: int = 8050
+    inference_backend: str = "stub"
+    inference_model_id: str = "Qwen/Qwen2.5-7B-Instruct"
+    inference_max_new_tokens: int = 256
+    inference_temperature: float = 0.7
+    inference_top_p: float = 0.9
+    inference_load_in_4bit: bool = True
+    inference_device: str = "auto"
 
