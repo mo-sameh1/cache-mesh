@@ -55,13 +55,7 @@ class GatewayService:
         for replica in self._replica_targets():
             try:
                 response = self.replica_client.write_cache(replica["url"], payload)
-                replica_status = response.get("status")
-                gateway_status = "degraded" if replica_status == "degraded" else "ok"
-                detail = (
-                    "Gateway wrote cache entry through a replica, but distributed replication degraded."
-                    if gateway_status == "degraded"
-                    else "Gateway wrote cache entry through a replica."
-                )
+                gateway_status, detail = self._write_forwarding_result(response)
                 return self._write_response(
                     payload,
                     status=gateway_status,
@@ -146,13 +140,21 @@ class GatewayService:
         }
         try:
             write_response = self.replica_client.write_cache(replica["url"], write_payload)
-            if write_response.get("status") == "degraded":
+            write_status = write_response.get("status")
+            if write_status == "degraded":
                 cache_status = "miss_generated_write_degraded"
                 detail = (
                     "Cache miss generated through inference, but distributed cache replication degraded "
                     "during the write."
                 )
                 status = "degraded"
+            elif write_status == "unavailable":
+                cache_status = "miss_generated_write_unavailable"
+                detail = (
+                    "Cache miss generated through inference, but the replica reported the cache write "
+                    "as unavailable."
+                )
+                status = "unavailable"
             else:
                 cache_status = "miss_generated"
                 detail = "Cache miss generated through inference and write was attempted successfully."
@@ -260,4 +262,21 @@ class GatewayService:
             "model_id": payload["model_id"],
             "lamport_ts": lamport_ts,
         }
+
+    def _write_forwarding_result(self, replica_response: dict) -> tuple[str, str]:
+        replica_status = replica_response.get("status")
+        if replica_status == "degraded":
+            return (
+                "degraded",
+                "Gateway wrote cache entry through a replica, but distributed replication degraded.",
+            )
+        if replica_status == "unavailable":
+            return (
+                "unavailable",
+                "Gateway could not complete the cache write because the replica reported it unavailable.",
+            )
+        return (
+            "ok",
+            "Gateway wrote cache entry through a replica.",
+        )
 

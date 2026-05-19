@@ -19,11 +19,13 @@ class FakeReplicaClient:
         fail_write: bool = False,
         fail_fault: bool = False,
         write_status: str = "placeholder",
+        stored: bool = True,
     ) -> None:
         self.read_responses = read_responses or []
         self.fail_write = fail_write
         self.fail_fault = fail_fault
         self.write_status = write_status
+        self.stored = stored
         self.read_urls: list[str] = []
         self.write_urls: list[str] = []
         self.fault_urls: list[str] = []
@@ -46,7 +48,7 @@ class FakeReplicaClient:
             "action": "cache.write",
             "status": self.write_status,
             "detail": "stored",
-            "stored": True,
+            "stored": self.stored,
             "replica_id": "replica-a",
             "model_id": payload["model_id"],
             "lamport_ts": None,
@@ -162,6 +164,24 @@ def test_query_cache_preserves_degraded_replica_write_status_after_generation() 
     assert response["cache_status"] == "miss_generated_write_degraded"
 
 
+def test_query_cache_preserves_unavailable_replica_write_status_after_generation() -> None:
+    service = GatewayService(
+        name_service_client=FakeNameServiceClient([_member("replica-a", 8201)]),
+        replica_client=FakeReplicaClient(
+            read_responses=[{"hit": False, "model_id": "demo"}],
+            write_status="unavailable",
+            stored=False,
+        ),
+        inference_client=FakeInferenceClient(),
+    )
+
+    response = service.query_cache(_query_payload())
+
+    assert response["status"] == "unavailable"
+    assert response["response_text"] == "generated answer"
+    assert response["cache_status"] == "miss_generated_write_unavailable"
+
+
 def test_query_cache_returns_unavailable_when_no_replica_can_be_read() -> None:
     service = GatewayService(
         name_service_client=FakeNameServiceClient([_member("replica-a", 8201)]),
@@ -203,6 +223,20 @@ def test_write_cache_preserves_degraded_replica_status() -> None:
     assert response["stored"] is True
     assert response["status"] == "degraded"
     assert "degraded" in response["detail"].lower()
+
+
+def test_write_cache_preserves_unavailable_replica_status() -> None:
+    service = GatewayService(
+        name_service_client=FakeNameServiceClient([_member("replica-a", 8201)]),
+        replica_client=FakeReplicaClient(write_status="unavailable", stored=False),
+        inference_client=FakeInferenceClient(),
+    )
+
+    response = service.write_cache({"prompt": "hello", "response_text": "world", "model_id": "demo"})
+
+    assert response["stored"] is False
+    assert response["status"] == "unavailable"
+    assert "unavailable" in response["detail"].lower()
 
 
 def test_arm_fault_forwards_to_fallback_replica(monkeypatch: pytest.MonkeyPatch) -> None:
