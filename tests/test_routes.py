@@ -1,5 +1,7 @@
 from fastapi.testclient import TestClient
 
+from services.replica.cache_service import CacheService
+from services.replica.embedding import DeterministicTestEmbedder
 from services.gateway.main import create_app as create_gateway_app
 from services.inference_adapter.main import create_app as create_inference_adapter_app
 from services.name_service.main import create_app as create_name_service_app
@@ -7,6 +9,7 @@ from services.replica.manager import ReplicaManager
 from services.replica.main import create_app as create_replica_app
 from services.replica.vector_store import VectorStoreAdapter
 from shared.config import ReplicaSettings
+from tests.replica_fakes import FakeQdrantClient
 
 
 class FakeNameServiceClient:
@@ -17,17 +20,6 @@ class FakeNameServiceClient:
         return {"accepted": True, "member": payload}
 
     async def close(self) -> None:
-        return None
-
-
-class FakeQdrantClient:
-    def __init__(self, **kwargs) -> None:
-        self.kwargs = kwargs
-
-    def get_collections(self) -> dict:
-        return {"collections": []}
-
-    def close(self) -> None:
         return None
 
 
@@ -71,11 +63,20 @@ def test_replica_routes() -> None:
         replica_advertised_host="replica-a",
         replica_advertised_port=8201,
         qdrant_url="http://qdrant-a:6333",
+        replica_peer_targets="replica-a=http://replica-a:8201",
+        semantic_score_threshold=0.18,
+    )
+    embedder = DeterministicTestEmbedder(dimensions=settings.semantic_vector_size)
+    vector_store = VectorStoreAdapter(
+        settings=settings,
+        client_factory=FakeQdrantClient,
+        vector_size=embedder.vector_size,
     )
     manager = ReplicaManager(
         settings=settings,
+        cache_service=CacheService(settings=settings, vector_store=vector_store, embedder=embedder),
         name_service_client=FakeNameServiceClient(),
-        vector_store=VectorStoreAdapter(settings=settings, client_factory=FakeQdrantClient),
+        vector_store=vector_store,
     )
     with TestClient(create_replica_app(replica_manager=manager)) as client:
         assert client.get("/health").status_code == 200
@@ -93,6 +94,28 @@ def test_replica_routes() -> None:
         assert hit_response.status_code == 200
         assert hit_response.json()["hit"] is True
         assert hit_response.json()["response_text"] == "world"
+
+        semantic_seed = client.post(
+            "/cache/write",
+            json={
+                "prompt": "how do i bake bread at home",
+                "response_text": "Use flour and yeast.",
+                "model_id": "demo",
+            },
+        )
+        assert semantic_seed.status_code == 200
+
+        semantic_hit = client.post(
+            "/cache/read",
+            json={
+                "prompt": "bread baking instructions for beginners",
+                "model_id": "demo",
+                "semantic_enabled": True,
+            },
+        )
+        assert semantic_hit.status_code == 200
+        assert semantic_hit.json()["hit"] is True
+        assert semantic_hit.json()["response_text"] == "Use flour and yeast."
 
         snapshot_response = client.post("/sync/snapshot", json={"replica_id": "replica-a"})
         assert snapshot_response.status_code == 200

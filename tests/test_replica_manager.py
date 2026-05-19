@@ -1,12 +1,16 @@
+import threading
 import time
 
 from fastapi.testclient import TestClient
 
-from services.replica.clients import NameServiceClientError
-from services.replica.manager import ReplicaManager
+from services.replica.cache_service import CacheService
+from services.replica.clients import NameServiceClientError, ReplicaPeerClientError
+from services.replica.embedding import DeterministicTestEmbedder
 from services.replica.main import create_app as create_replica_app
+from services.replica.manager import ReplicaManager
 from services.replica.vector_store import VectorStoreAdapter
 from shared.config import ReplicaSettings
+from tests.replica_fakes import FakeQdrantClient
 
 
 class RecordingNameServiceClient:
@@ -30,15 +34,27 @@ class RecordingNameServiceClient:
         self.closed = True
 
 
-class NoOpVectorClient:
-    def __init__(self, **kwargs) -> None:
-        self.kwargs = kwargs
+class DirectReplicaPeerClient:
+    def __init__(self, network: dict[str, ReplicaManager]) -> None:
+        self.network = network
 
-    def get_collections(self) -> dict:
-        return {"collections": []}
+    def request_write_lock(self, replica_url: str, payload: dict) -> dict:
+        return self._target(replica_url).request_internal_write_lock(payload)
 
-    def close(self) -> None:
-        return None
+    def mark_write_started(self, replica_url: str, payload: dict) -> dict:
+        return self._target(replica_url).mark_internal_write_started(payload)
+
+    def replicate_write(self, replica_url: str, payload: dict) -> dict:
+        return self._target(replica_url).apply_replicated_write(payload)
+
+    def mark_write_finished(self, replica_url: str, payload: dict) -> dict:
+        return self._target(replica_url).mark_internal_write_finished(payload)
+
+    def _target(self, replica_url: str) -> ReplicaManager:
+        manager = self.network.get(replica_url)
+        if manager is None:
+            raise ReplicaPeerClientError(f"No replica is registered for {replica_url}")
+        return manager
 
 
 def test_replica_registers_on_startup() -> None:
@@ -63,6 +79,8 @@ def test_replica_heartbeat_failures_are_tolerated() -> None:
             replica_advertised_host="replica-a",
             replica_advertised_port=8201,
             heartbeat_interval_sec=0.01,
+            replica_peer_targets="replica-a=http://replica-a:8201",
+            qdrant_url="http://qdrant-a:6333",
         ),
     )
 
@@ -74,38 +92,212 @@ def test_replica_heartbeat_failures_are_tolerated() -> None:
     assert len(name_service.heartbeat_calls) >= 1
 
 
-def test_replica_overwrite_and_model_id_isolation() -> None:
-    manager = _build_manager()
+def test_replica_overwrite_model_isolation_and_semantic_hits() -> None:
+    manager = _build_manager(
+        settings=ReplicaSettings(
+            replica_id="replica-a",
+            replica_advertised_host="replica-a",
+            replica_advertised_port=8201,
+            qdrant_url="http://qdrant-a:6333",
+            replica_peer_targets="replica-a=http://replica-a:8201",
+            semantic_score_threshold=0.18,
+        )
+    )
 
-    first_write = manager.write_cache({"prompt": "hello", "response_text": "world", "model_id": "demo"})
-    second_write = manager.write_cache({"prompt": "hello", "response_text": "again", "model_id": "demo"})
-    other_model_write = manager.write_cache({"prompt": "hello", "response_text": "other", "model_id": "alt"})
+    first_write = manager.write_cache(
+        {"prompt": "hello distributed systems", "response_text": "world", "model_id": "demo"}
+    )
+    second_write = manager.write_cache(
+        {"prompt": "hello distributed systems", "response_text": "again", "model_id": "demo"}
+    )
+    other_model_write = manager.write_cache(
+        {"prompt": "hello distributed systems", "response_text": "other", "model_id": "alt"}
+    )
+    semantic_write = manager.write_cache(
+        {
+            "prompt": "how can i bake bread at home",
+            "response_text": "Use flour, water, yeast, and patience.",
+            "model_id": "demo",
+        }
+    )
 
-    first_hit = manager.read_cache({"prompt": "hello", "model_id": "demo", "semantic_enabled": True})
-    other_hit = manager.read_cache({"prompt": "hello", "model_id": "alt", "semantic_enabled": True})
-    miss = manager.read_cache({"prompt": "hello", "model_id": "missing", "semantic_enabled": True})
+    first_hit = manager.read_cache({"prompt": "hello distributed systems", "model_id": "demo", "semantic_enabled": True})
+    other_hit = manager.read_cache({"prompt": "hello distributed systems", "model_id": "alt", "semantic_enabled": True})
+    semantic_hit = manager.read_cache(
+        {"prompt": "bread baking instructions for beginners", "model_id": "demo", "semantic_enabled": True}
+    )
+    miss = manager.read_cache({"prompt": "hello distributed systems", "model_id": "missing", "semantic_enabled": True})
 
     assert first_write["lamport_ts"] == 1
     assert second_write["lamport_ts"] == 2
     assert other_model_write["lamport_ts"] == 3
+    assert semantic_write["lamport_ts"] == 4
     assert first_hit["response_text"] == "again"
     assert other_hit["response_text"] == "other"
+    assert semantic_hit["hit"] is True
+    assert semantic_hit["response_text"] == "Use flour, water, yeast, and patience."
+    assert semantic_hit["score"] is not None
     assert miss["hit"] is False
+
+
+def test_replica_write_replicates_to_all_peers() -> None:
+    network: dict[str, ReplicaManager] = {}
+    managers = [
+        _build_manager(
+            settings=_settings(
+                "replica-a",
+                8201,
+                peer_targets="replica-a=http://replica-a:8201,replica-b=http://replica-b:8202,replica-c=http://replica-c:8203",
+            ),
+            peer_client=DirectReplicaPeerClient(network),
+        ),
+        _build_manager(
+            settings=_settings(
+                "replica-b",
+                8202,
+                peer_targets="replica-a=http://replica-a:8201,replica-b=http://replica-b:8202,replica-c=http://replica-c:8203",
+            ),
+            peer_client=DirectReplicaPeerClient(network),
+        ),
+        _build_manager(
+            settings=_settings(
+                "replica-c",
+                8203,
+                peer_targets="replica-a=http://replica-a:8201,replica-b=http://replica-b:8202,replica-c=http://replica-c:8203",
+            ),
+            peer_client=DirectReplicaPeerClient(network),
+        ),
+    ]
+    network.update(
+        {
+            "http://replica-a:8201": managers[0],
+            "http://replica-b:8202": managers[1],
+            "http://replica-c:8203": managers[2],
+        }
+    )
+
+    response = managers[0].write_cache({"prompt": "cache me", "response_text": "yes", "model_id": "demo"})
+
+    assert response["stored"] is True
+    for manager in managers:
+        hit = manager.read_cache({"prompt": "cache me", "model_id": "demo", "semantic_enabled": True})
+        assert hit["hit"] is True
+        assert hit["response_text"] == "yes"
+
+
+def test_read_waits_for_remote_write_and_returns_hit_after_replication() -> None:
+    network: dict[str, ReplicaManager] = {}
+    delay_started = threading.Event()
+    release_write = threading.Event()
+    writer_result: dict = {}
+    reader_result: dict = {}
+
+    def delay_hook(_: dict) -> None:
+        delay_started.set()
+        assert release_write.wait(timeout=15)
+
+    manager_a = _build_manager(
+        settings=_settings(
+            "replica-a",
+            8201,
+            peer_targets="replica-a=http://replica-a:8201,replica-b=http://replica-b:8202",
+        ),
+        peer_client=DirectReplicaPeerClient(network),
+        write_delay_hook=delay_hook,
+    )
+    manager_b = _build_manager(
+        settings=_settings(
+            "replica-b",
+            8202,
+            peer_targets="replica-a=http://replica-a:8201,replica-b=http://replica-b:8202",
+        ),
+        peer_client=DirectReplicaPeerClient(network),
+    )
+    network.update(
+        {
+            "http://replica-a:8201": manager_a,
+            "http://replica-b:8202": manager_b,
+        }
+    )
+
+    def run_write() -> None:
+        writer_result["response"] = manager_a.write_cache(
+            {
+                "prompt": "long write prompt",
+                "response_text": "written before read returns",
+                "model_id": "demo",
+            }
+        )
+
+    def run_read() -> None:
+        reader_result["response"] = manager_b.read_cache(
+            {
+                "prompt": "long write prompt",
+                "model_id": "demo",
+                "semantic_enabled": True,
+            }
+        )
+
+    writer = threading.Thread(target=run_write)
+    writer.start()
+    assert delay_started.wait(timeout=5)
+
+    read_started = time.monotonic()
+    reader = threading.Thread(target=run_read)
+    reader.start()
+    time.sleep(0.2)
+    assert reader.is_alive() is True
+
+    release_write.set()
+    writer.join(timeout=15)
+    reader.join(timeout=15)
+    elapsed = time.monotonic() - read_started
+
+    assert writer_result["response"]["stored"] is True
+    assert reader_result["response"]["hit"] is True
+    assert reader_result["response"]["response_text"] == "written before read returns"
+    assert elapsed >= 0.2
+
+
+def _settings(replica_id: str, port: int, *, peer_targets: str) -> ReplicaSettings:
+    return ReplicaSettings(
+        replica_id=replica_id,
+        replica_advertised_host=replica_id,
+        replica_advertised_port=port,
+        qdrant_url=f"http://qdrant-{replica_id[-1]}:6333",
+        replica_peer_targets=peer_targets,
+        semantic_score_threshold=0.18,
+    )
 
 
 def _build_manager(
     *,
     settings: ReplicaSettings | None = None,
     name_service_client: RecordingNameServiceClient | None = None,
+    peer_client: DirectReplicaPeerClient | None = None,
+    write_delay_hook=None,
 ) -> ReplicaManager:
-    resolved_settings = settings or ReplicaSettings(
-        replica_id="replica-a",
-        replica_advertised_host="replica-a",
-        replica_advertised_port=8201,
-        qdrant_url="http://qdrant-a:6333",
+    resolved_settings = settings or _settings(
+        "replica-a",
+        8201,
+        peer_targets="replica-a=http://replica-a:8201",
+    )
+    embedder = DeterministicTestEmbedder(dimensions=resolved_settings.semantic_vector_size)
+    vector_store = VectorStoreAdapter(
+        settings=resolved_settings,
+        client_factory=FakeQdrantClient,
+        vector_size=embedder.vector_size,
+    )
+    cache_service = CacheService(
+        settings=resolved_settings,
+        vector_store=vector_store,
+        embedder=embedder,
     )
     return ReplicaManager(
         settings=resolved_settings,
+        cache_service=cache_service,
         name_service_client=name_service_client or RecordingNameServiceClient(),
-        vector_store=VectorStoreAdapter(settings=resolved_settings, client_factory=NoOpVectorClient),
+        vector_store=vector_store,
+        peer_client=peer_client or DirectReplicaPeerClient({}),
+        write_delay_hook=write_delay_hook,
     )
