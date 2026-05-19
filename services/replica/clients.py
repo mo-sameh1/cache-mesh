@@ -56,8 +56,11 @@ class ReplicaPeerClient:
         self.timeout_sec = timeout_sec
         self.transport = transport
 
-    def request_write_lock(self, replica_url: str, payload: dict[str, Any]) -> dict[str, Any]:
-        return self._request("POST", f"{replica_url.rstrip('/')}/internal/locks/request-write", payload)
+    def request_token(self, replica_url: str, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._request("POST", f"{replica_url.rstrip('/')}/internal/mutex/request-token", payload)
+
+    def transfer_token(self, replica_url: str, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._request("POST", f"{replica_url.rstrip('/')}/internal/mutex/transfer-token", payload)
 
     def mark_write_started(self, replica_url: str, payload: dict[str, Any]) -> dict[str, Any]:
         return self._request("POST", f"{replica_url.rstrip('/')}/internal/locks/write-started", payload)

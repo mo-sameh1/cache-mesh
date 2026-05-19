@@ -38,8 +38,11 @@ class DirectReplicaPeerClient:
     def __init__(self, network: dict[str, ReplicaManager]) -> None:
         self.network = network
 
-    def request_write_lock(self, replica_url: str, payload: dict) -> dict:
-        return self._target(replica_url).request_internal_write_lock(payload)
+    def request_token(self, replica_url: str, payload: dict) -> dict:
+        return self._target(replica_url).request_internal_token(payload)
+
+    def transfer_token(self, replica_url: str, payload: dict) -> dict:
+        return self._target(replica_url).receive_internal_token(payload)
 
     def mark_write_started(self, replica_url: str, payload: dict) -> dict:
         return self._target(replica_url).mark_internal_write_started(payload)
@@ -176,9 +179,10 @@ def test_replica_write_replicates_to_all_peers() -> None:
         }
     )
 
-    response = managers[0].write_cache({"prompt": "cache me", "response_text": "yes", "model_id": "demo"})
+    response = managers[1].write_cache({"prompt": "cache me", "response_text": "yes", "model_id": "demo"})
 
     assert response["stored"] is True
+    assert response["replica_id"] == "replica-b"
     for manager in managers:
         hit = manager.read_cache({"prompt": "cache me", "model_id": "demo", "semantic_enabled": True})
         assert hit["hit"] is True
@@ -203,7 +207,6 @@ def test_read_waits_for_remote_write_and_returns_hit_after_replication() -> None
             peer_targets="replica-a=http://replica-a:8201,replica-b=http://replica-b:8202",
         ),
         peer_client=DirectReplicaPeerClient(network),
-        write_delay_hook=delay_hook,
     )
     manager_b = _build_manager(
         settings=_settings(
@@ -212,6 +215,7 @@ def test_read_waits_for_remote_write_and_returns_hit_after_replication() -> None
             peer_targets="replica-a=http://replica-a:8201,replica-b=http://replica-b:8202",
         ),
         peer_client=DirectReplicaPeerClient(network),
+        write_delay_hook=delay_hook,
     )
     network.update(
         {
@@ -221,7 +225,7 @@ def test_read_waits_for_remote_write_and_returns_hit_after_replication() -> None
     )
 
     def run_write() -> None:
-        writer_result["response"] = manager_a.write_cache(
+        writer_result["response"] = manager_b.write_cache(
             {
                 "prompt": "long write prompt",
                 "response_text": "written before read returns",
@@ -230,7 +234,7 @@ def test_read_waits_for_remote_write_and_returns_hit_after_replication() -> None
         )
 
     def run_read() -> None:
-        reader_result["response"] = manager_b.read_cache(
+        reader_result["response"] = manager_a.read_cache(
             {
                 "prompt": "long write prompt",
                 "model_id": "demo",
@@ -259,6 +263,62 @@ def test_read_waits_for_remote_write_and_returns_hit_after_replication() -> None
     assert elapsed >= 0.2
 
 
+def test_token_can_move_multiple_times_between_replicas() -> None:
+    network: dict[str, ReplicaManager] = {}
+    managers = {
+        "replica-a": _build_manager(
+            settings=_settings(
+                "replica-a",
+                8201,
+                peer_targets="replica-a=http://replica-a:8201,replica-b=http://replica-b:8202,replica-c=http://replica-c:8203",
+            ),
+            peer_client=DirectReplicaPeerClient(network),
+        ),
+        "replica-b": _build_manager(
+            settings=_settings(
+                "replica-b",
+                8202,
+                peer_targets="replica-a=http://replica-a:8201,replica-b=http://replica-b:8202,replica-c=http://replica-c:8203",
+            ),
+            peer_client=DirectReplicaPeerClient(network),
+        ),
+        "replica-c": _build_manager(
+            settings=_settings(
+                "replica-c",
+                8203,
+                peer_targets="replica-a=http://replica-a:8201,replica-b=http://replica-b:8202,replica-c=http://replica-c:8203",
+            ),
+            peer_client=DirectReplicaPeerClient(network),
+        ),
+    }
+    network.update(
+        {
+            "http://replica-a:8201": managers["replica-a"],
+            "http://replica-b:8202": managers["replica-b"],
+            "http://replica-c:8203": managers["replica-c"],
+        }
+    )
+
+    first = managers["replica-b"].write_cache(
+        {"prompt": "first distributed write", "response_text": "from b", "model_id": "demo"}
+    )
+    second = managers["replica-c"].write_cache(
+        {"prompt": "second distributed write", "response_text": "from c", "model_id": "demo"}
+    )
+
+    assert first["stored"] is True
+    assert second["stored"] is True
+    for manager in managers.values():
+        first_hit = manager.read_cache(
+            {"prompt": "first distributed write", "model_id": "demo", "semantic_enabled": True}
+        )
+        second_hit = manager.read_cache(
+            {"prompt": "second distributed write", "model_id": "demo", "semantic_enabled": True}
+        )
+        assert first_hit["hit"] is True
+        assert second_hit["hit"] is True
+
+
 def _settings(replica_id: str, port: int, *, peer_targets: str) -> ReplicaSettings:
     return ReplicaSettings(
         replica_id=replica_id,
@@ -266,6 +326,7 @@ def _settings(replica_id: str, port: int, *, peer_targets: str) -> ReplicaSettin
         replica_advertised_port=port,
         qdrant_url=f"http://qdrant-{replica_id[-1]}:6333",
         replica_peer_targets=peer_targets,
+        initial_token_replica_id="replica-a",
         semantic_score_threshold=0.18,
     )
 

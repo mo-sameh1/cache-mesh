@@ -10,7 +10,7 @@ from services.replica.clients import (
     ReplicaPeerClient,
     ReplicaPeerClientError,
 )
-from services.replica.coordination import DistributedReadWriteCoordinator
+from services.replica.coordination import RicartAgrawalaTokenCoordinator
 from services.replica.config import get_settings
 from services.replica.embedding import SentenceTransformerEmbedder
 from services.replica.fault_service import ReplicaFaultService
@@ -34,7 +34,7 @@ class ReplicaManager:
         fault_service: ReplicaFaultService | None = None,
         sync_service: SyncService | None = None,
         peer_client: ReplicaPeerClient | None = None,
-        coordinator: DistributedReadWriteCoordinator | None = None,
+        coordinator: RicartAgrawalaTokenCoordinator | None = None,
         write_delay_hook: Callable[[dict], None] | None = None,
     ) -> None:
         self.settings = settings or get_settings()
@@ -56,7 +56,12 @@ class ReplicaManager:
         self.fault_service = fault_service or ReplicaFaultService(FaultController())
         self.sync_service = sync_service or SyncService()
         self.peer_client = peer_client or ReplicaPeerClient(self.settings.request_timeout_sec)
-        self.coordinator = coordinator or DistributedReadWriteCoordinator(self.settings.replica_id, self.clock)
+        self.coordinator = coordinator or RicartAgrawalaTokenCoordinator(
+            self.settings.replica_id,
+            self.clock,
+            replica_ids=[target["replica_id"] for target in self.settings.peer_targets],
+            initial_token_holder=self.settings.initial_token_replica_id,
+        )
         self.write_delay_hook = write_delay_hook
         self._heartbeat_task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
@@ -89,23 +94,23 @@ class ReplicaManager:
             return self.cache_service.read(payload)
 
     def write_cache(self, payload: dict) -> dict:
-        request = self.coordinator.open_local_write_request()
+        request_seq = self.coordinator.open_local_write_request()
         peers = self._peer_targets()
-        granted_peers: list[dict[str, str]] = []
         started_peers: list[dict[str, str]] = []
         write_started = False
         lamport_ts: int | None = None
         try:
-            for peer in peers:
-                self.peer_client.request_write_lock(
-                    peer["url"],
-                    {"replica_id": self.settings.replica_id, "lamport_ts": request.lamport_ts},
-                )
-                granted_peers.append(peer)
+            if self.coordinator.should_broadcast_request():
+                for peer in peers:
+                    self.peer_client.request_token(
+                        peer["url"],
+                        {"replica_id": self.settings.replica_id, "request_seq": request_seq},
+                    )
 
-            lamport_ts = self.coordinator.begin_local_write(request)
+            self.coordinator.begin_local_write(request_seq)
+            lamport_ts = self.clock.tick()
             write_started = True
-            for peer in granted_peers:
+            for peer in peers:
                 self.peer_client.mark_write_started(
                     peer["url"],
                     {"replica_id": self.settings.replica_id, "lamport_ts": lamport_ts},
@@ -126,7 +131,7 @@ class ReplicaManager:
                 "vector": result.vector,
                 "source_replica_id": self.settings.replica_id,
             }
-            for peer in granted_peers:
+            for peer in peers:
                 self.peer_client.replicate_write(peer["url"], replicate_payload)
 
             return self._write_response(
@@ -148,9 +153,10 @@ class ReplicaManager:
         finally:
             self._release_remote_writers(started_peers)
             if write_started:
-                self.coordinator.finish_local_write(request)
+                self.coordinator.finish_local_write(request_seq)
             else:
-                self.coordinator.abort_local_write(request)
+                self.coordinator.abort_local_write(request_seq)
+            self._pass_token_if_needed()
 
     def snapshot(self, payload: dict) -> dict:
         return self.sync_service.snapshot(payload)
@@ -164,8 +170,19 @@ class ReplicaManager:
     def describe_vector_store(self) -> dict:
         return self.vector_store.describe()
 
-    def request_internal_write_lock(self, payload: dict) -> dict:
-        return self.coordinator.grant_remote_write_request(payload["replica_id"], payload["lamport_ts"])
+    def request_internal_token(self, payload: dict) -> dict:
+        response = self.coordinator.note_remote_token_request(payload["replica_id"], payload["request_seq"])
+        self._pass_token_if_needed()
+        return response
+
+    def receive_internal_token(self, payload: dict) -> dict:
+        response = self.coordinator.receive_token(
+            payload["from_replica_id"],
+            last_granted=payload["last_granted"],
+            queue=payload["queue"],
+        )
+        self._pass_token_if_needed()
+        return response
 
     def mark_internal_write_started(self, payload: dict) -> dict:
         return self.coordinator.mark_remote_write_started(payload["replica_id"], payload["lamport_ts"])
@@ -232,6 +249,29 @@ class ReplicaManager:
                 )
             except ReplicaPeerClientError as exc:
                 logger.warning("Could not release remote writer state on %s: %s", peer["replica_id"], exc)
+
+    def _pass_token_if_needed(self) -> None:
+        recipient_id = self.coordinator.next_token_recipient()
+        if recipient_id is None:
+            return
+
+        target = self._peer_target_by_id(recipient_id)
+        if target is None:
+            logger.warning("Token recipient %s is not in the configured peer targets.", recipient_id)
+            return
+
+        payload = {
+            "from_replica_id": self.settings.replica_id,
+            **self.coordinator.export_token_for_transfer(recipient_id),
+        }
+        self.peer_client.transfer_token(target["url"], payload)
+        self.coordinator.mark_token_sent(recipient_id)
+
+    def _peer_target_by_id(self, replica_id: str) -> dict[str, str] | None:
+        for target in self.settings.peer_targets:
+            if target["replica_id"] == replica_id:
+                return target
+        return None
 
     def _write_response(
         self,

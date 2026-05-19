@@ -2,8 +2,10 @@ from fastapi import APIRouter, Request
 
 from services.replica.internal_models import (
     InternalReplicatedWriteRequest,
+    InternalTokenRequest,
+    InternalTokenTransferRequest,
     InternalWriteFinishedRequest,
-    InternalWriteLockRequest,
+    InternalWriteStateRequest,
 )
 from shared.models import (
     CacheReadRequest,
@@ -57,13 +59,18 @@ def describe_vector_store(request: Request) -> dict:
     return request.app.state.replica_manager.describe_vector_store()
 
 
-@router.post("/internal/locks/request-write")
-def request_write_lock(request: Request, payload: InternalWriteLockRequest) -> dict:
-    return request.app.state.replica_manager.request_internal_write_lock(payload.model_dump())
+@router.post("/internal/mutex/request-token")
+def request_token(request: Request, payload: InternalTokenRequest) -> dict:
+    return request.app.state.replica_manager.request_internal_token(payload.model_dump())
+
+
+@router.post("/internal/mutex/transfer-token")
+def transfer_token(request: Request, payload: InternalTokenTransferRequest) -> dict:
+    return request.app.state.replica_manager.receive_internal_token(payload.model_dump())
 
 
 @router.post("/internal/locks/write-started")
-def write_started(request: Request, payload: InternalWriteLockRequest) -> dict:
+def write_started(request: Request, payload: InternalWriteStateRequest) -> dict:
     return request.app.state.replica_manager.mark_internal_write_started(payload.model_dump())
 
 

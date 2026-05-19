@@ -3,7 +3,18 @@ from pydantic import BaseModel
 from shared.models import CacheWriteRequest
 
 
-class InternalWriteLockRequest(BaseModel):
+class InternalTokenRequest(BaseModel):
+    replica_id: str
+    request_seq: int
+
+
+class InternalTokenTransferRequest(BaseModel):
+    from_replica_id: str
+    last_granted: dict[str, int]
+    queue: list[str]
+
+
+class InternalWriteStateRequest(BaseModel):
     replica_id: str
     lamport_ts: int
 

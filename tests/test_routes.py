@@ -133,6 +133,13 @@ def test_replica_routes() -> None:
         assert vector_store_response.status_code == 200
         assert vector_store_response.json()["status"] == "ok"
 
+        token_transfer_response = client.post(
+            "/internal/mutex/transfer-token",
+            json={"from_replica_id": "replica-b", "last_granted": {"replica-a": 0, "replica-b": 0}, "queue": []},
+        )
+        assert token_transfer_response.status_code == 200
+        assert token_transfer_response.json()["accepted"] is True
+
         release_response = client.post(
             "/internal/locks/write-finished",
             json={"replica_id": "replica-b"},
