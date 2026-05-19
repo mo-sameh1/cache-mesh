@@ -8,6 +8,10 @@ class InternalWriteLockRequest(BaseModel):
     lamport_ts: int
 
 
+class InternalWriteFinishedRequest(BaseModel):
+    replica_id: str
+
+
 class InternalReplicatedWriteRequest(CacheWriteRequest):
     lamport_ts: int
     vector: list[float]

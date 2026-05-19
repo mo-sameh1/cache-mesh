@@ -133,6 +133,13 @@ def test_replica_routes() -> None:
         assert vector_store_response.status_code == 200
         assert vector_store_response.json()["status"] == "ok"
 
+        release_response = client.post(
+            "/internal/locks/write-finished",
+            json={"replica_id": "replica-b"},
+        )
+        assert release_response.status_code == 200
+        assert release_response.json()["accepted"] is True
+
 
 def test_inference_adapter_routes() -> None:
     client = TestClient(create_inference_adapter_app())

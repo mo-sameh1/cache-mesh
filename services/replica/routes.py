@@ -1,6 +1,10 @@
 from fastapi import APIRouter, Request
 
-from services.replica.internal_models import InternalReplicatedWriteRequest, InternalWriteLockRequest
+from services.replica.internal_models import (
+    InternalReplicatedWriteRequest,
+    InternalWriteFinishedRequest,
+    InternalWriteLockRequest,
+)
 from shared.models import (
     CacheReadRequest,
     CacheReadResponse,
@@ -69,6 +73,6 @@ def replicate_write(request: Request, payload: InternalReplicatedWriteRequest) -
 
 
 @router.post("/internal/locks/write-finished")
-def write_finished(request: Request, payload: InternalWriteLockRequest) -> dict:
+def write_finished(request: Request, payload: InternalWriteFinishedRequest) -> dict:
     return request.app.state.replica_manager.mark_internal_write_finished(payload.model_dump())
 

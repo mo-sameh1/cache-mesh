@@ -1,4 +1,4 @@
-import hashlib
+import uuid
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -157,8 +157,7 @@ class VectorStoreAdapter:
 
     @staticmethod
     def _point_id(prompt: str, model_id: str) -> str:
-        digest = hashlib.sha256(f"{model_id}\0{prompt}".encode("utf-8")).hexdigest()
-        return digest
+        return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{model_id}\0{prompt}"))
 
     @staticmethod
     def _record_to_entry(record: Any, *, score: float | None) -> StoredCacheEntry:

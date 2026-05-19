@@ -1,3 +1,5 @@
+import uuid
+
 from services.replica.embedding import DeterministicTestEmbedder
 from services.replica.vector_store import VectorStoreAdapter
 from shared.config import ReplicaSettings
@@ -54,6 +56,12 @@ def test_vector_store_creates_client_lazily_once() -> None:
     adapter.describe()
 
     assert created == [{"url": "http://qdrant-z:6333"}]
+
+
+def test_vector_store_generates_qdrant_compatible_point_ids() -> None:
+    point_id = VectorStoreAdapter._point_id("hello world", "demo")
+
+    assert str(uuid.UUID(point_id)) == point_id
 
 
 def test_vector_store_supports_exact_lookup_and_overwrite() -> None:
