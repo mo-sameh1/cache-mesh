@@ -274,7 +274,10 @@ function renderSettings() {
   $("#replica-a-url").value = state.settings.endpoints.replicas["replica-a"];
   $("#replica-b-url").value = state.settings.endpoints.replicas["replica-b"];
   $("#replica-c-url").value = state.settings.endpoints.replicas["replica-c"];
-  $("#start-command").textContent = `.\\scripts\\start-local-demo.ps1 -InferenceMode ${state.settings.inferenceMode}`;
+  $("#start-command").textContent =
+    state.settings.inferenceMode === "real"
+      ? ".\\scripts\\start-local-demo.ps1 -InferenceMode real -RealModel small -SemanticMode sentence-transformers"
+      : ".\\scripts\\start-local-demo.ps1 -InferenceMode stub";
   $("#env-output").textContent = buildEnvOutput();
 }
 
@@ -478,7 +481,7 @@ function applyMode(mode) {
   refreshAll();
 }
 
-function collectSettingsFromForm() {
+function updateSettingsFromForm() {
   state.settings.endpoints.gateway = $("#gateway-url").value.trim();
   state.settings.endpoints.nameService = $("#name-service-url").value.trim();
   state.settings.endpoints.inference = $("#inference-url").value.trim();
@@ -486,6 +489,11 @@ function collectSettingsFromForm() {
   state.settings.endpoints.replicas["replica-b"] = $("#replica-b-url").value.trim();
   state.settings.endpoints.replicas["replica-c"] = $("#replica-c-url").value.trim();
   saveSettings();
+  $("#env-output").textContent = buildEnvOutput();
+}
+
+function collectSettingsFromForm() {
+  updateSettingsFromForm();
   addEvent("Settings saved", state.settings);
 }
 
@@ -565,6 +573,11 @@ function wireEvents() {
     collectSettingsFromForm();
     refreshAll();
   });
+
+  ["gateway-url", "name-service-url", "inference-url", "replica-a-url", "replica-b-url", "replica-c-url"].forEach((id) => {
+    $(`#${id}`).addEventListener("input", updateSettingsFromForm);
+  });
+
   $("#create-snapshot").addEventListener("click", createSnapshot);
   $("#replay-snapshot").addEventListener("click", replaySnapshot);
 
