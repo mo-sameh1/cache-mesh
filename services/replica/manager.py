@@ -69,6 +69,7 @@ class ReplicaManager:
         self._stop_event = asyncio.Event()
 
     async def start(self) -> None:
+        await asyncio.to_thread(self._warm_semantic_runtime)
         await self._register()
         if self._heartbeat_task is None:
             self._stop_event = asyncio.Event()
@@ -295,6 +296,10 @@ class ReplicaManager:
             for target in self.settings.peer_targets
             if target["replica_id"] != self.settings.replica_id
         ]
+
+    def _warm_semantic_runtime(self) -> None:
+        logger.info("Prewarming replica semantic runtime for %s.", self.settings.replica_id)
+        self.cache_service.prepare_vector("CacheMesh startup semantic warmup.")
 
     def _release_remote_writers(self, peers: list[dict[str, str]], write_id: str) -> None:
         for peer in reversed(peers):

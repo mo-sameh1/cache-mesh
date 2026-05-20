@@ -34,6 +34,16 @@ class RecordingNameServiceClient:
         self.closed = True
 
 
+class RecordingWarmupEmbedder(DeterministicTestEmbedder):
+    def __init__(self, dimensions: int = 384) -> None:
+        super().__init__(dimensions=dimensions)
+        self.calls: list[str] = []
+
+    def embed(self, text: str) -> list[float]:
+        self.calls.append(text)
+        return super().embed(text)
+
+
 class DirectReplicaPeerClient:
     def __init__(self, network: dict[str, ReplicaManager]) -> None:
         self.network = network
@@ -131,6 +141,37 @@ def test_replica_registers_on_startup() -> None:
         {"replica_id": "replica-a", "host": "replica-a", "port": 8201}
     ]
     assert name_service.closed is True
+
+
+def test_replica_prewarms_semantic_runtime_on_startup() -> None:
+    settings = _settings(
+        "replica-a",
+        8201,
+        peer_targets="replica-a=http://replica-a:8201",
+    )
+    embedder = RecordingWarmupEmbedder(dimensions=settings.semantic_vector_size)
+    vector_store = VectorStoreAdapter(
+        settings=settings,
+        client_factory=FakeQdrantClient,
+        vector_size=embedder.vector_size,
+    )
+    cache_service = CacheService(
+        settings=settings,
+        vector_store=vector_store,
+        embedder=embedder,
+    )
+    manager = ReplicaManager(
+        settings=settings,
+        cache_service=cache_service,
+        name_service_client=RecordingNameServiceClient(),
+        vector_store=vector_store,
+        peer_client=DirectReplicaPeerClient({}),
+    )
+
+    with TestClient(create_replica_app(replica_manager=manager)):
+        pass
+
+    assert embedder.calls == ["CacheMesh startup semantic warmup."]
 
 
 def test_replica_heartbeat_failures_are_tolerated() -> None:
