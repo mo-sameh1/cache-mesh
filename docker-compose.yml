@@ -1,104 +1,54 @@
 services:
-  gateway:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    env_file:
-      - .env
-    environment:
-      SERVICE_ROLE: gateway
-    command: uvicorn services.gateway.main:app --host 0.0.0.0 --port 8000
-    ports:
-      - "8000:8000"
-    volumes:
-      - .:/app
-    depends_on:
-      - name-service
-      - replica-a
-      - replica-b
-      - replica-c
-
   name-service:
     build:
       context: .
       dockerfile: Dockerfile
     env_file:
       - .env
+    profiles:
+      - name-service
+    command: uvicorn services.name_service.main:app --host 0.0.0.0 --port ${NAME_SERVICE_PORT:-8100}
     environment:
-      SERVICE_ROLE: name-service
       NAME_SERVICE_HOST: 0.0.0.0
-      NAME_SERVICE_PORT: 8100
-    command: uvicorn services.name_service.main:app --host 0.0.0.0 --port 8100
+      NAME_SERVICE_PORT: ${NAME_SERVICE_PORT:-8100}
     ports:
-      - "8100:8100"
-    volumes:
-      - .:/app
+      - "${NAME_SERVICE_PORT:-8100}:${NAME_SERVICE_PORT:-8100}"
+    restart: unless-stopped
 
-  replica-a:
+  replica:
     build:
       context: .
       dockerfile: Dockerfile
     env_file:
       - .env
+    profiles:
+      - replica
+    command: uvicorn services.replica.main:app --host 0.0.0.0 --port ${REPLICA_PORT:-8201}
     environment:
-      SERVICE_ROLE: replica
-      REPLICA_ID: replica-a
       REPLICA_HOST: 0.0.0.0
-      REPLICA_PORT: 8201
-      REPLICA_ADVERTISED_HOST: replica-a
-      REPLICA_ADVERTISED_PORT: 8201
-      QDRANT_URL: http://qdrant-a:6333
-    command: uvicorn services.replica.main:app --host 0.0.0.0 --port 8201
+      REPLICA_PORT: ${REPLICA_PORT:-8201}
+      QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
     ports:
-      - "8201:8201"
-    volumes:
-      - .:/app
+      - "${REPLICA_PORT:-8201}:${REPLICA_PORT:-8201}"
     depends_on:
-      - qdrant-a
+      - qdrant
+    restart: unless-stopped
 
-  replica-b:
+  gateway:
     build:
       context: .
       dockerfile: Dockerfile
     env_file:
       - .env
+    profiles:
+      - gateway
+    command: uvicorn services.gateway.main:app --host 0.0.0.0 --port ${GATEWAY_PORT:-8000}
     environment:
-      SERVICE_ROLE: replica
-      REPLICA_ID: replica-b
-      REPLICA_HOST: 0.0.0.0
-      REPLICA_PORT: 8202
-      REPLICA_ADVERTISED_HOST: replica-b
-      REPLICA_ADVERTISED_PORT: 8202
-      QDRANT_URL: http://qdrant-b:6333
-    command: uvicorn services.replica.main:app --host 0.0.0.0 --port 8202
+      GATEWAY_HOST: 0.0.0.0
+      GATEWAY_PORT: ${GATEWAY_PORT:-8000}
     ports:
-      - "8202:8202"
-    volumes:
-      - .:/app
-    depends_on:
-      - qdrant-b
-
-  replica-c:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    env_file:
-      - .env
-    environment:
-      SERVICE_ROLE: replica
-      REPLICA_ID: replica-c
-      REPLICA_HOST: 0.0.0.0
-      REPLICA_PORT: 8203
-      REPLICA_ADVERTISED_HOST: replica-c
-      REPLICA_ADVERTISED_PORT: 8203
-      QDRANT_URL: http://qdrant-c:6333
-    command: uvicorn services.replica.main:app --host 0.0.0.0 --port 8203
-    ports:
-      - "8203:8203"
-    volumes:
-      - .:/app
-    depends_on:
-      - qdrant-c
+      - "${GATEWAY_PORT:-8000}:${GATEWAY_PORT:-8000}"
+    restart: unless-stopped
 
   inference-adapter:
     build:
@@ -106,41 +56,22 @@ services:
       dockerfile: Dockerfile.inference
     env_file:
       - .env
+    profiles:
+      - inference
+    command: uvicorn services.inference_adapter.main:app --host 0.0.0.0 --port ${ADAPTER_PORT:-8050}
     environment:
-      SERVICE_ROLE: inference-adapter
-      INFERENCE_BACKEND: hf_transformers
-      INFERENCE_MODEL_ID: Qwen/Qwen2.5-7B-Instruct
-      INFERENCE_LOAD_IN_4BIT: "true"
-      INFERENCE_DEVICE: auto
-    command: uvicorn services.inference_adapter.main:app --host 0.0.0.0 --port 8050
+      ADAPTER_HOST: 0.0.0.0
+      ADAPTER_PORT: ${ADAPTER_PORT:-8050}
     ports:
-      - "8050:8050"
-    volumes:
-      - .:/app
+      - "${ADAPTER_PORT:-8050}:${ADAPTER_PORT:-8050}"
+    restart: unless-stopped
 
-  qdrant-a:
+  qdrant:
     image: qdrant/qdrant:latest
+    profiles:
+      - replica
     ports:
-      - "6334:6333"
+      - "${QDRANT_HOST_PORT:-6333}:6333"
     volumes:
-      - qdrant_a_data:/qdrant/storage
-
-  qdrant-b:
-    image: qdrant/qdrant:latest
-    ports:
-      - "6335:6333"
-    volumes:
-      - qdrant_b_data:/qdrant/storage
-
-  qdrant-c:
-    image: qdrant/qdrant:latest
-    ports:
-      - "6336:6333"
-    volumes:
-      - qdrant_c_data:/qdrant/storage
-
-volumes:
-  qdrant_a_data:
-  qdrant_b_data:
-  qdrant_c_data:
-
+      - ./.docker/qdrant:/qdrant/storage
+    restart: unless-stopped

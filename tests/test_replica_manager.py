@@ -14,21 +14,33 @@ from tests.replica_fakes import FakeQdrantClient
 
 
 class RecordingNameServiceClient:
-    def __init__(self, *, fail_heartbeat: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        fail_heartbeat: bool = False,
+        fail_register_count: int = 0,
+        heartbeat_member_override: dict | None = None,
+    ) -> None:
         self.fail_heartbeat = fail_heartbeat
+        self.fail_register_count = fail_register_count
+        self.heartbeat_member_override = heartbeat_member_override
         self.register_calls: list[dict] = []
         self.heartbeat_calls: list[dict] = []
         self.closed = False
 
     async def register(self, payload: dict) -> dict:
         self.register_calls.append(payload)
+        if self.fail_register_count > 0:
+            self.fail_register_count -= 1
+            raise NameServiceClientError("register unavailable")
         return {"registered": True, "member": payload}
 
     async def heartbeat(self, payload: dict) -> dict:
         self.heartbeat_calls.append(payload)
         if self.fail_heartbeat:
             raise NameServiceClientError("heartbeat unavailable")
-        return {"accepted": True, "member": payload}
+        member = self.heartbeat_member_override or payload
+        return {"accepted": True, "member": member}
 
     async def close(self) -> None:
         self.closed = True
@@ -194,6 +206,29 @@ def test_replica_heartbeat_failures_are_tolerated() -> None:
 
     assert response.status_code == 200
     assert len(name_service.heartbeat_calls) >= 1
+
+
+def test_replica_retries_registration_until_name_service_is_reachable() -> None:
+    name_service = RecordingNameServiceClient(fail_register_count=1)
+    manager = _build_manager(
+        name_service_client=name_service,
+        settings=ReplicaSettings(
+            replica_id="replica-a",
+            replica_advertised_host="replica-a",
+            replica_advertised_port=8201,
+            heartbeat_interval_sec=0.01,
+            replica_peer_targets="replica-a=http://replica-a:8201",
+            qdrant_url="http://qdrant-a:6333",
+        ),
+    )
+
+    with TestClient(create_replica_app(replica_manager=manager)) as client:
+        time.sleep(0.05)
+        response = client.get("/health")
+
+    assert response.status_code == 200
+    assert len(name_service.register_calls) >= 2
+    assert manager._registered_with_name_service is True
 
 
 def test_replica_overwrite_model_isolation_and_semantic_hits() -> None:

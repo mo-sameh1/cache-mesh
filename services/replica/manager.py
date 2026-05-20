@@ -67,6 +67,7 @@ class ReplicaManager:
         self._pending_token_transfer: tuple[str, dict[str, object]] | None = None
         self._heartbeat_task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
+        self._registered_with_name_service = False
 
     async def start(self) -> None:
         await asyncio.to_thread(self._warm_semantic_runtime)
@@ -263,7 +264,7 @@ class ReplicaManager:
     def mark_internal_write_finished(self, payload: dict) -> dict:
         return self.coordinator.mark_remote_write_finished(payload["replica_id"], payload["write_id"])
 
-    async def _register(self) -> None:
+    async def _register(self) -> bool:
         payload = {
             "replica_id": self.settings.replica_id,
             "host": self.settings.replica_advertised_host,
@@ -271,24 +272,42 @@ class ReplicaManager:
         }
         try:
             await self.name_service_client.register(payload)
+            self._registered_with_name_service = True
+            return True
         except NameServiceClientError as exc:
+            self._registered_with_name_service = False
             logger.warning("Replica registration failed: %s", exc)
+            return False
 
     async def _heartbeat_loop(self) -> None:
         interval = self.settings.heartbeat_interval_sec
         while not self._stop_event.is_set():
             try:
                 await asyncio.sleep(interval)
-                await self.name_service_client.heartbeat(
+                if not self._registered_with_name_service:
+                    await self._register()
+                    continue
+
+                response = await self.name_service_client.heartbeat(
                     {
                         "replica_id": self.settings.replica_id,
                         "status": "healthy",
                     }
                 )
+                member = response.get("member") or {}
+                if self._member_registration_drifted(member):
+                    await self._register()
             except asyncio.CancelledError:
                 raise
             except NameServiceClientError as exc:
+                self._registered_with_name_service = False
                 logger.warning("Replica heartbeat failed: %s", exc)
+
+    def _member_registration_drifted(self, member: dict[str, object]) -> bool:
+        return (
+            member.get("host") != self.settings.replica_advertised_host
+            or int(member.get("port") or 0) != self.settings.advertised_port
+        )
 
     def _peer_targets(self) -> list[dict[str, str]]:
         return [

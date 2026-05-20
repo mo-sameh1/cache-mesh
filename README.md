@@ -1,107 +1,238 @@
 # CacheMesh Project Scaffold
 
-This repository is the first scaffolding pass for the CacheMesh distributed semantic cache project. It gives the team a shared Python environment, a placeholder service layout, environment configuration, Docker files, and stub APIs that reflect the architecture. It does **not** implement real distributed behavior yet.
+This repository scaffolds the CacheMesh distributed semantic cache project. It includes FastAPI services for the gateway, name service, replica node, and inference adapter, plus Qdrant-backed replica storage and a Docker setup that can be split across multiple LAN machines.
 
 ## What this phase includes
 
-- Built-in Python `venv` workflow for teammate-friendly onboarding
-- One `requirements.txt` for the initial dependency set
-- Root `.env.example` plus a local `.env`
-- Placeholder FastAPI services for the gateway, name service, replica service, and inference adapter
-- A static UI placeholder under `apps/ui/`
-- A generic `Dockerfile` and an initial `docker-compose.yml`
-- Smoke tests for config loading, app creation, imports, and placeholder routes
+- One Python environment for the whole repo
+- FastAPI services for `gateway`, `name-service`, `replica`, and `inference-adapter`
+- Shared config, protocol models, and client helpers
+- Replica membership registration and heartbeat tracking
+- Replica-to-replica distributed write coordination
+- A Docker Compose setup for running only the services assigned to the current machine
 
 ## What this phase does not include
 
-- Real cache read or write logic
-- Real membership tracking
-- Real Lamport or token-based synchronization
-- Real Qdrant integration beyond placeholder wiring
-- Real fault detection or recovery behavior
+- Persistent shared state for the name service
+- Automatic service discovery beyond the configured name service and replica target lists
+- A full production orchestrator such as Kubernetes or Swarm
 
-## Quick start on Windows
+## Local Python setup
+
+### Windows
 
 1. Install Python 3.13.
-2. Install Docker Desktop and make sure `docker compose` works in PowerShell.
-3. Clone the repo and open PowerShell in the repo root.
-4. Create the virtual environment:
+2. Clone the repo and open PowerShell in the repo root.
+3. Create the virtual environment:
 
 ```powershell
 py -3.13 -m venv .venv
 ```
 
-5. Activate the virtual environment:
+4. Activate it:
 
 ```powershell
 .venv\Scripts\Activate.ps1
 ```
 
-6. Install Python dependencies:
+5. Install dependencies:
 
 ```powershell
 pip install -r requirements.txt
 ```
 
-7. Copy the example environment file if you are starting from a fresh clone:
+6. Copy the environment template:
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-8. Start the initial container topology:
+### macOS / Linux
 
-```powershell
-docker compose up -d
-```
-
-9. Run the scaffold test suite:
-
-```powershell
-pytest
-```
-
-## Quick start on macOS or Linux
-
-Use the same overall flow, but activate the environment with:
+Use the same flow, but activate the environment with:
 
 ```bash
 source .venv/bin/activate
 ```
 
-## Repo map
+## Docker deployment model
 
-- `apps/ui/`
-  Static UI placeholder and notes for the future fault toggle / metrics dashboard.
-- `services/gateway/`
-  Placeholder API gateway entrypoint, routes, config wrapper, and service layer.
-- `services/name_service/`
-  Placeholder membership and heartbeat service.
-- `services/replica/`
-  Placeholder replica API, cache service, sync service, fault service, and vector store adapter.
-- `services/inference_adapter/`
-  Placeholder inference API and stub client for miss-path integration.
-- `shared/`
-  Common config, models, constants, protocol helpers, logging setup, Lamport clock placeholder, and fault control helpers.
-- `tests/`
-  Import smoke tests, config tests, app creation tests, and placeholder route tests.
+The root `docker-compose.yml` now describes a single machine in the distributed system. Each machine runs the same Compose file, but chooses its local services through `COMPOSE_PROFILES` in `.env`.
+
+Available profiles:
+
+- `name-service`
+- `gateway`
+- `inference`
+- `replica`
+
+The `replica` profile also starts a local `qdrant` container automatically.
+
+### Standard startup flow on any machine
+
+1. Copy `.env.example` to `.env`.
+2. Set the machine-specific values in `.env`.
+3. Start the assigned services:
+
+```powershell
+docker compose up -d --build
+```
+
+4. Check status:
+
+```powershell
+docker compose ps
+```
+
+5. Check logs when needed:
+
+```powershell
+docker compose logs -f
+```
+
+### Required `.env` values
+
+These values drive the distributed deployment:
+
+- `COMPOSE_PROFILES`
+- `NAME_SERVICE_URL`
+- `INFERENCE_ADAPTER_URL`
+- `GATEWAY_REPLICA_TARGETS`
+- `GATEWAY_REPLICA_URLS`
+- `REPLICA_ID`
+- `REPLICA_PORT`
+- `REPLICA_ADVERTISED_HOST`
+- `REPLICA_ADVERTISED_PORT`
+- `REPLICA_PEER_TARGETS`
+- `INITIAL_TOKEN_REPLICA_ID`
+- `QDRANT_URL`
+- `QDRANT_HOST_PORT`
+
+### Example three-machine layout
+
+Example mapping:
+
+- `192.168.116.204`: `name-service` + `replica-a`
+- `192.168.116.206`: `inference-adapter` + `replica-b`
+- `192.168.116.207`: `gateway` + `replica-c`
+
+Machine `192.168.116.204`:
+
+```env
+COMPOSE_PROFILES=name-service,replica
+NAME_SERVICE_URL=http://192.168.116.204:8100
+INFERENCE_ADAPTER_URL=http://192.168.116.206:8050
+GATEWAY_REPLICA_TARGETS=replica-a=http://192.168.116.204:8201,replica-b=http://192.168.116.206:8202,replica-c=http://192.168.116.207:8203
+GATEWAY_REPLICA_URLS=http://192.168.116.204:8201,http://192.168.116.206:8202,http://192.168.116.207:8203
+REPLICA_ID=replica-a
+REPLICA_PORT=8201
+REPLICA_ADVERTISED_HOST=192.168.116.204
+REPLICA_ADVERTISED_PORT=8201
+REPLICA_PEER_TARGETS=replica-a=http://192.168.116.204:8201,replica-b=http://192.168.116.206:8202,replica-c=http://192.168.116.207:8203
+INITIAL_TOKEN_REPLICA_ID=replica-a
+QDRANT_URL=http://qdrant:6333
+QDRANT_HOST_PORT=6334
+```
+
+Machine `192.168.116.206`:
+
+```env
+COMPOSE_PROFILES=inference,replica
+NAME_SERVICE_URL=http://192.168.116.204:8100
+INFERENCE_ADAPTER_URL=http://192.168.116.206:8050
+GATEWAY_REPLICA_TARGETS=replica-a=http://192.168.116.204:8201,replica-b=http://192.168.116.206:8202,replica-c=http://192.168.116.207:8203
+GATEWAY_REPLICA_URLS=http://192.168.116.204:8201,http://192.168.116.206:8202,http://192.168.116.207:8203
+REPLICA_ID=replica-b
+REPLICA_PORT=8202
+REPLICA_ADVERTISED_HOST=192.168.116.206
+REPLICA_ADVERTISED_PORT=8202
+REPLICA_PEER_TARGETS=replica-a=http://192.168.116.204:8201,replica-b=http://192.168.116.206:8202,replica-c=http://192.168.116.207:8203
+INITIAL_TOKEN_REPLICA_ID=replica-a
+QDRANT_URL=http://qdrant:6333
+QDRANT_HOST_PORT=6335
+INFERENCE_BACKEND=hf_transformers
+INFERENCE_DEVICE=auto
+```
+
+Machine `192.168.116.207`:
+
+```env
+COMPOSE_PROFILES=gateway,replica
+NAME_SERVICE_URL=http://192.168.116.204:8100
+INFERENCE_ADAPTER_URL=http://192.168.116.206:8050
+GATEWAY_REPLICA_TARGETS=replica-a=http://192.168.116.204:8201,replica-b=http://192.168.116.206:8202,replica-c=http://192.168.116.207:8203
+GATEWAY_REPLICA_URLS=http://192.168.116.204:8201,http://192.168.116.206:8202,http://192.168.116.207:8203
+REPLICA_ID=replica-c
+REPLICA_PORT=8203
+REPLICA_ADVERTISED_HOST=192.168.116.207
+REPLICA_ADVERTISED_PORT=8203
+REPLICA_PEER_TARGETS=replica-a=http://192.168.116.204:8201,replica-b=http://192.168.116.206:8202,replica-c=http://192.168.116.207:8203
+INITIAL_TOKEN_REPLICA_ID=replica-a
+QDRANT_URL=http://qdrant:6333
+QDRANT_HOST_PORT=6336
+```
+
+After saving `.env` on each machine, start that machine with:
+
+```powershell
+docker compose up -d --build
+```
+
+### Firewall ports
+
+Open these inbound ports on the matching machine:
+
+- `8100` on the name service machine
+- `8050` on the inference machine
+- `8000` on the gateway machine
+- `8201`, `8202`, `8203` on the three replica machines
+
+### Verification
+
+Check the key endpoints from any machine:
+
+```powershell
+curl.exe http://192.168.116.204:8100/health
+curl.exe http://192.168.116.204:8100/members
+curl.exe http://192.168.116.206:8050/health
+curl.exe http://192.168.116.207:8000/health
+curl.exe http://192.168.116.204:8201/health
+curl.exe http://192.168.116.206:8202/health
+curl.exe http://192.168.116.207:8203/health
+```
+
+The `/members` response should show all three replicas once they are registered.
 
 ## Local development notes
 
-Each service currently exposes a health endpoint and placeholder routes that return stub payloads. This lets the team start building against stable request and response shapes before the real implementation lands.
-
-Example local runs:
+You can still run services directly without Docker:
 
 ```powershell
 uvicorn services.gateway.main:app --reload --host 0.0.0.0 --port 8000
 uvicorn services.replica.main:app --reload --host 0.0.0.0 --port 8201
 ```
 
-## Docker notes
+## Tests
 
-- The root `Dockerfile` is generic for Python services.
-- The root `docker-compose.yml` is a **topology scaffold**, not the final deployment system.
-- Replica services are configured as separate containers with per-service environment overrides.
-- Qdrant is provisioned as one local instance per replica using named volumes.
+Run the test suite with:
 
+```powershell
+pytest
+```
 
+## Repo map
+
+- `apps/ui/`
+  Static UI placeholder and notes for the future dashboard.
+- `services/gateway/`
+  Gateway entrypoint, routes, config wrapper, and service layer.
+- `services/name_service/`
+  Membership and heartbeat service.
+- `services/replica/`
+  Replica API, cache service, sync service, fault service, and vector store adapter.
+- `services/inference_adapter/`
+  Inference API and runtime selection.
+- `shared/`
+  Common config, models, logging setup, protocol helpers, clock logic, and shared HTTP client code.
+- `tests/`
+  Unit and integration coverage for config, services, liveness, gateway flows, and replica coordination.
