@@ -2,9 +2,9 @@ services:
   name-service:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: ${APP_DOCKERFILE:-Dockerfile}
     env_file:
-      - .env
+      - ${CACHEMESH_ENV_FILE:-.env}
     profiles:
       - name-service
     command: uvicorn services.name_service.main:app --host 0.0.0.0 --port ${NAME_SERVICE_PORT:-8100}
@@ -18,9 +18,9 @@ services:
   replica:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: ${APP_DOCKERFILE:-Dockerfile}
     env_file:
-      - .env
+      - ${CACHEMESH_ENV_FILE:-.env}
     profiles:
       - replica
     command: uvicorn services.replica.main:app --host 0.0.0.0 --port ${REPLICA_PORT:-8201}
@@ -37,9 +37,9 @@ services:
   gateway:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: ${APP_DOCKERFILE:-Dockerfile}
     env_file:
-      - .env
+      - ${CACHEMESH_ENV_FILE:-.env}
     profiles:
       - gateway
     command: uvicorn services.gateway.main:app --host 0.0.0.0 --port ${GATEWAY_PORT:-8000}
@@ -53,9 +53,9 @@ services:
   inference-adapter:
     build:
       context: .
-      dockerfile: Dockerfile.inference
+      dockerfile: ${INFERENCE_DOCKERFILE:-Dockerfile.inference}
     env_file:
-      - .env
+      - ${CACHEMESH_ENV_FILE:-.env}
     profiles:
       - inference
     command: uvicorn services.inference_adapter.main:app --host 0.0.0.0 --port ${ADAPTER_PORT:-8050}
@@ -73,5 +73,5 @@ services:
     ports:
       - "${QDRANT_HOST_PORT:-6333}:6333"
     volumes:
-      - ./.docker/qdrant:/qdrant/storage
+      - ${QDRANT_STORAGE_PATH:-./.docker/qdrant}:/qdrant/storage
     restart: unless-stopped

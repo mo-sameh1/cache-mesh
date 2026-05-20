@@ -71,6 +71,7 @@ class ReplicaSettings(AppSettings):
         "replica-c=http://replica-c:8203"
     )
     initial_token_replica_id: str = "replica-a"
+    semantic_embedding_backend: str = "sentence_transformers"
     semantic_embedding_model_id: str = "sentence-transformers/all-MiniLM-L6-v2"
     semantic_vector_size: int = 384
     semantic_score_threshold: float = 0.72

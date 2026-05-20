@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from services.replica.config import get_settings
-from services.replica.embedding import SentenceTransformerEmbedder
+from services.replica.embedding import DeterministicTestEmbedder, SentenceTransformerEmbedder
 from services.replica.vector_store import StoredCacheEntry, VectorStoreAdapter
 from shared.config import ReplicaSettings
 
@@ -30,7 +30,7 @@ class CacheService:
         embedder: Embedder | None = None,
     ) -> None:
         self.settings = settings or get_settings()
-        self.embedder = embedder or SentenceTransformerEmbedder(settings=self.settings)
+        self.embedder = embedder or self._build_embedder()
         self.vector_store = vector_store or VectorStoreAdapter(
             settings=self.settings,
             vector_size=self.embedder.vector_size,
@@ -95,6 +95,11 @@ class CacheService:
 
     def size(self) -> int:
         return self.vector_store.count_entries()
+
+    def _build_embedder(self) -> Embedder:
+        if self.settings.semantic_embedding_backend == "deterministic":
+            return DeterministicTestEmbedder(dimensions=self.settings.semantic_vector_size)
+        return SentenceTransformerEmbedder(settings=self.settings)
 
     def _hit_response(self, entry: StoredCacheEntry, *, detail: str, score: float | None) -> dict:
         return {

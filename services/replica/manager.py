@@ -13,7 +13,7 @@ from services.replica.clients import (
 )
 from services.replica.coordination import RicartAgrawalaTokenCoordinator
 from services.replica.config import get_settings
-from services.replica.embedding import SentenceTransformerEmbedder
+from services.replica.embedding import DeterministicTestEmbedder, SentenceTransformerEmbedder
 from services.replica.fault_service import ReplicaFaultService
 from services.replica.sync_service import SyncService
 from services.replica.vector_store import VectorStoreAdapter
@@ -40,7 +40,7 @@ class ReplicaManager:
     ) -> None:
         self.settings = settings or get_settings()
         self.clock = LamportClock()
-        self.embedder = SentenceTransformerEmbedder(settings=self.settings)
+        self.embedder = self._build_embedder()
         self.vector_store = vector_store or VectorStoreAdapter(
             settings=self.settings,
             vector_size=self.embedder.vector_size,
@@ -319,6 +319,11 @@ class ReplicaManager:
     def _warm_semantic_runtime(self) -> None:
         logger.info("Prewarming replica semantic runtime for %s.", self.settings.replica_id)
         self.cache_service.prepare_vector("CacheMesh startup semantic warmup.")
+
+    def _build_embedder(self):
+        if self.settings.semantic_embedding_backend == "deterministic":
+            return DeterministicTestEmbedder(dimensions=self.settings.semantic_vector_size)
+        return SentenceTransformerEmbedder(settings=self.settings)
 
     def _release_remote_writers(self, peers: list[dict[str, str]], write_id: str) -> None:
         for peer in reversed(peers):
