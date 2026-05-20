@@ -136,6 +136,7 @@ class ReplicaManager:
             self.sync_service.record_write(
                 payload=payload,
                 lamport_ts=lamport_ts,
+                vector=result.vector,
                 replica_origin=self.settings.replica_id,
             )
             if self.write_delay_hook is not None:
@@ -191,7 +192,21 @@ class ReplicaManager:
 
     def replay(self, payload: dict) -> dict:
         self.fault_service.check_and_apply()
-        return self.sync_service.replay(payload)
+        result = self.sync_service.replay(payload)
+        replay_entries = result.pop("_replay_entries", [])
+        for entry in replay_entries:
+            self.clock.update(entry["lamport_ts"])
+            self.cache_service.apply_write(
+                {
+                    "prompt": entry["prompt"],
+                    "response_text": entry["response_text"],
+                    "model_id": entry["model_id"],
+                },
+                lamport_ts=entry["lamport_ts"],
+                vector=entry["vector"],
+                replica_origin=entry.get("replica_origin"),
+            )
+        return result
 
     def arm_fault(self, payload: dict) -> dict:
         return self.fault_service.arm_fault(payload)

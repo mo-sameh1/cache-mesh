@@ -16,6 +16,7 @@ class SyncService:
         payload: dict,
         *,
         lamport_ts: int,
+        vector: list[float] | None = None,
         replica_origin: str | None = None,
     ) -> None:
         self._write_log.append(
@@ -24,6 +25,7 @@ class SyncService:
                 "response_text": payload["response_text"],
                 "model_id": payload["model_id"],
                 "lamport_ts": lamport_ts,
+                "vector": vector or [],
                 "replica_origin": replica_origin,
             }
         )
@@ -83,4 +85,5 @@ class SyncService:
             "accepted": True,
             "replica_id": payload["replica_id"],
             "replayed_operations": len(entries),
+            "_replay_entries": entries,
         }
