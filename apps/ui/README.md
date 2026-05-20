@@ -1,14 +1,37 @@
-# UI Placeholder
+# CacheMesh Demo Console
 
-This folder is reserved for the future CacheMesh web UI.
+This is a static browser dashboard for the CacheMesh demo.
 
-Planned responsibilities:
+Open it after the Docker demo is running:
 
-- prompt submission
-- cache hit / miss metrics
-- replica health summary
-- failure simulation toggle
-- admin testing controls
+```powershell
+cd "D:\EUI Seniors\Spring\Distributed Systems\cache-mesh"
+.\scripts\start-local-demo.ps1 -InferenceMode stub
+```
 
-For this scaffold phase, the UI is intentionally static and framework-free.
+Then either open `apps/ui/index.html` directly in a browser or serve the folder:
 
+```powershell
+cd apps\ui
+python -m http.server 3000
+```
+
+If served locally, open:
+
+```text
+http://localhost:3000
+```
+
+The console supports:
+
+- gateway prompt queries
+- hit/miss display and selected replica display
+- direct reads from all replicas
+- name-service membership polling
+- per-replica health polling
+- per-replica `/coordination` polling
+- write token visibility
+- fault injection through the gateway
+- local endpoint presets
+- editable three-laptop endpoint settings
+- snapshot/replay API calls

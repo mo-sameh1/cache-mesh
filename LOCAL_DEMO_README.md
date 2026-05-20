@@ -266,7 +266,32 @@ If it says `degraded`, inspect logs:
 docker compose --env-file .env.demo-core.real -p cachemesh-core logs -f inference-adapter
 ```
 
-## 9. Run The Demo Query
+## 9. Use The Demo Console
+
+The browser dashboard lives in `apps/ui`.
+
+Option A: open the HTML file directly:
+
+```text
+apps/ui/index.html
+```
+
+Option B: serve it on localhost:
+
+```powershell
+cd apps\ui
+python -m http.server 3000
+```
+
+Then open:
+
+```text
+http://localhost:3000
+```
+
+The console can submit prompts through the gateway, show cache hit/miss status, show the selected replica, poll name-service membership, poll per-replica `/coordination`, run direct reads against all replicas, call fault injection, and show raw JSON evidence for the demo.
+
+## 10. Run The Demo Query
 
 The browser URL `http://localhost:8000/cache/query` is not enough by itself because `/cache/query` is a POST endpoint. Use PowerShell or curl to send JSON.
 
@@ -309,7 +334,7 @@ detail: cache hit returned by replica
 
 This proves the second request did not need inference.
 
-## 10. Prove Replication Worked
+## 11. Prove Replication Worked
 
 After the first successful query, all three replicas should have the cached response.
 
@@ -336,7 +361,7 @@ score: 1.0
 
 In `real` mode, all three replicas should return the real generated response text from the first query.
 
-## 11. What To Say During The Demo
+## 12. What To Say During The Demo
 
 Use this explanation:
 
@@ -349,7 +374,7 @@ Use this explanation:
 7. The selected replica replicates the write to the other replicas.
 8. The second request hits cache and returns without calling inference again.
 
-## 12. Shut Down After The Demo
+## 13. Shut Down After The Demo
 
 Stop the local demo:
 
@@ -368,7 +393,7 @@ docker compose -p cachemesh-replica-c down
 
 If you also want to delete the cached demo data, use the clean-state commands in section 3.
 
-## 13. Troubleshooting
+## 14. Troubleshooting
 
 Docker is not running:
 
@@ -443,7 +468,7 @@ Return to reliable demo mode:
 .\scripts\start-local-demo.ps1 -InferenceMode stub
 ```
 
-## 14. Why This Demo Is Separate From The Three-Laptop Setup
+## 15. Why This Demo Is Separate From The Three-Laptop Setup
 
 The real distributed setup uses one `.env` per laptop:
 

@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from services.inference_adapter.config import get_settings
 from services.inference_adapter.routes import router
 from services.inference_adapter.service import InferenceService
+from shared.cors import enable_demo_cors
 from shared.logging import configure_logging
 
 
@@ -28,6 +29,7 @@ def create_app(inference_service: InferenceService | None = None) -> FastAPI:
         summary="CacheMesh inference adapter scaffold",
         lifespan=lifespan,
     )
+    enable_demo_cors(app)
     app.include_router(router)
     return app
 
