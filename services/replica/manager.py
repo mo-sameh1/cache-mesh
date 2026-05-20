@@ -92,10 +92,12 @@ class ReplicaManager:
         }
 
     def read_cache(self, payload: dict) -> dict:
+        self.fault_service.check_and_apply()
         with self.coordinator.read_guard():
             return self.cache_service.read(payload)
 
     def write_cache(self, payload: dict) -> dict:
+        self.fault_service.check_and_apply()
         request_seq = self.coordinator.open_local_write_request()
         peers = self._peer_targets()
         started_peers: list[dict[str, str]] = []
@@ -131,6 +133,11 @@ class ReplicaManager:
                 replica_origin=self.settings.replica_id,
             )
             local_write_applied = True
+            self.sync_service.record_write(
+                payload=payload,
+                lamport_ts=lamport_ts,
+                replica_origin=self.settings.replica_id,
+            )
             if self.write_delay_hook is not None:
                 self.write_delay_hook(payload)
 
@@ -179,9 +186,11 @@ class ReplicaManager:
             self._pass_token_if_needed()
 
     def snapshot(self, payload: dict) -> dict:
+        self.fault_service.check_and_apply()
         return self.sync_service.snapshot(payload)
 
     def replay(self, payload: dict) -> dict:
+        self.fault_service.check_and_apply()
         return self.sync_service.replay(payload)
 
     def arm_fault(self, payload: dict) -> dict:

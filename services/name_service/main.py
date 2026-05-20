@@ -16,7 +16,7 @@ def create_app() -> FastAPI:
         summary="CacheMesh name service",
     )
     # Each app gets its own fresh registry so test isolation is guaranteed.
-    app.state.registry = MembershipRegistry()
+    app.state.registry = MembershipRegistry(settings=settings)
     app.include_router(router)
     return app
 

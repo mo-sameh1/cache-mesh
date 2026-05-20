@@ -70,15 +70,15 @@ def transfer_token(request: Request, payload: InternalTokenTransferRequest) -> d
 
 
 @router.post("/internal/locks/write-started")
-def write_started(request: Request, payload: InternalWriteStateRequest) -> dict:
+def mark_write_started(request: Request, payload: InternalWriteStateRequest) -> dict:
     return request.app.state.replica_manager.mark_internal_write_started(payload.model_dump())
 
 
-@router.post("/internal/cache/replicate")
-def replicate_write(request: Request, payload: InternalReplicatedWriteRequest) -> dict:
-    return request.app.state.replica_manager.apply_replicated_write(payload.model_dump())
-
-
 @router.post("/internal/locks/write-finished")
-def write_finished(request: Request, payload: InternalWriteFinishedRequest) -> dict:
+def mark_write_finished(request: Request, payload: InternalWriteFinishedRequest) -> dict:
     return request.app.state.replica_manager.mark_internal_write_finished(payload.model_dump())
+
+
+@router.post("/internal/cache/replicate")
+def replicate_cache(request: Request, payload: InternalReplicatedWriteRequest) -> dict:
+    return request.app.state.replica_manager.apply_replicated_write(payload.model_dump())

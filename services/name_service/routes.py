@@ -12,11 +12,12 @@ from services.name_service.registry import MembershipRegistry
 
 
 router = APIRouter()
+registry = MembershipRegistry()
 
 
 def _get_registry(request: Request) -> MembershipRegistry:
     """Retrieve the per-app registry from app.state (set by create_app)."""
-    return request.app.state.registry
+    return getattr(request.app.state, "registry", registry)
 
 
 @router.get("/health", response_model=HealthResponse)

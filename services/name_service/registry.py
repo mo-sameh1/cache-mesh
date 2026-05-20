@@ -2,8 +2,8 @@
 
 State machine per replica:
   registered  ──heartbeat──►  healthy
-  healthy     ──SUSPECT_THRESHOLD elapsed──►  suspect
-  suspect     ──UNHEALTHY_THRESHOLD elapsed──►  unhealthy
+  healthy     ──suspect_after_misses * heartbeat_interval seconds──►  suspect
+  suspect     ──unhealthy_after_misses * heartbeat_interval seconds──►  unhealthy
   any state   ──new heartbeat──►  healthy
 """
 from __future__ import annotations
@@ -11,19 +11,15 @@ from __future__ import annotations
 import time
 from typing import Dict, Optional
 
-# How often replicas are expected to send heartbeats (seconds).
-HEARTBEAT_INTERVAL: float = 10.0
-# Transition thresholds relative to last heartbeat.
-SUSPECT_AFTER: float = 1.5 * HEARTBEAT_INTERVAL   # 15 s
-UNHEALTHY_AFTER: float = 3.0 * HEARTBEAT_INTERVAL  # 30 s
+from shared.config import NameServiceSettings
 
 
-def _compute_status(last_heartbeat: float, now: float) -> str:
+def _compute_status(last_heartbeat: float, now: float, suspect_after: float, unhealthy_after: float) -> str:
     """Derive liveness status from elapsed time since last heartbeat."""
     elapsed = now - last_heartbeat
-    if elapsed < SUSPECT_AFTER:
+    if elapsed < suspect_after:
         return "healthy"
-    if elapsed < UNHEALTHY_AFTER:
+    if elapsed < unhealthy_after:
         return "suspect"
     return "unhealthy"
 
@@ -31,9 +27,17 @@ def _compute_status(last_heartbeat: float, now: float) -> str:
 class MembershipRegistry:
     """In-memory membership registry with healthy / suspect / unhealthy transitions."""
 
-    def __init__(self) -> None:
+    def __init__(self, settings: NameServiceSettings | None = None) -> None:
+        settings = settings or NameServiceSettings()
+        self.heartbeat_interval = settings.heartbeat_interval_sec
+        self.suspect_after = self.heartbeat_interval * settings.suspect_after_misses
+        self.unhealthy_after = self.heartbeat_interval * settings.unhealthy_after_misses
         # replica_id → {replica_id, host, port, last_heartbeat}
         self._members: Dict[str, dict] = {}
+
+    @property
+    def members(self) -> Dict[str, dict]:
+        return self._members
 
     # ------------------------------------------------------------------
     # internal helpers
@@ -46,7 +50,7 @@ class MembershipRegistry:
             "replica_id": raw["replica_id"],
             "host": raw["host"],
             "port": raw["port"],
-            "status": _compute_status(raw["last_heartbeat"], t),
+            "status": _compute_status(raw["last_heartbeat"], t, self.suspect_after, self.unhealthy_after),
         }
 
     # ------------------------------------------------------------------
