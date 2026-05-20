@@ -18,5 +18,6 @@ docker-data/
 qdrant-data/
 .docker/
 *.pdf
+report/
 
 PROJECT_CONTEXT.md

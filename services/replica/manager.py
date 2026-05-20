@@ -93,6 +93,20 @@ class ReplicaManager:
             "detail": "Replica manager is running.",
         }
 
+    def coordination_status(self) -> dict:
+        snapshot = self.coordinator.status_snapshot()
+        return {
+            "service": "replica",
+            "action": "coordination.status",
+            "status": "ok",
+            "detail": "Replica coordination state snapshot.",
+            "replica_id": self.settings.replica_id,
+            "pending_token_transfer_to": (
+                self._pending_token_transfer[0] if self._pending_token_transfer is not None else None
+            ),
+            **snapshot,
+        }
+
     def read_cache(self, payload: dict) -> dict:
         self.fault_service.check_and_apply()
         with self.coordinator.read_guard():

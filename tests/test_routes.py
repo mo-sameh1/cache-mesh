@@ -80,6 +80,11 @@ def test_replica_routes() -> None:
     )
     with TestClient(create_replica_app(replica_manager=manager)) as client:
         assert client.get("/health").status_code == 200
+        coordination_response = client.get("/coordination")
+        assert coordination_response.status_code == 200
+        assert coordination_response.json()["replica_id"] == "replica-a"
+        assert coordination_response.json()["has_token"] is True
+        assert coordination_response.json()["local_write_active"] is False
 
         read_response = client.post("/cache/read", json={"prompt": "hello", "model_id": "demo"})
         assert read_response.status_code == 200

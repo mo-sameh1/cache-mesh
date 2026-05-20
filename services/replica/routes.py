@@ -12,6 +12,7 @@ from shared.models import (
     CacheReadResponse,
     CacheWriteRequest,
     CacheWriteResponse,
+    CoordinationStatusResponse,
     FaultInjectionRequest,
     FaultInjectionResponse,
     HealthResponse,
@@ -27,6 +28,11 @@ router = APIRouter()
 @router.get("/health", response_model=HealthResponse)
 def health(request: Request) -> HealthResponse:
     return HealthResponse(**request.app.state.replica_manager.health())
+
+
+@router.get("/coordination", response_model=CoordinationStatusResponse)
+def coordination_status(request: Request) -> CoordinationStatusResponse:
+    return CoordinationStatusResponse(**request.app.state.replica_manager.coordination_status())
 
 
 @router.post("/cache/read", response_model=CacheReadResponse)
