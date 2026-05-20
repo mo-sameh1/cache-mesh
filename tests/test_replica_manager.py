@@ -279,6 +279,48 @@ def test_replica_overwrite_model_isolation_and_semantic_hits() -> None:
     assert miss["hit"] is False
 
 
+def test_coordination_status_reports_token_holder_state() -> None:
+    network: dict[str, ReplicaManager] = {}
+    manager_a = _build_manager(
+        settings=_settings(
+            "replica-a",
+            8201,
+            peer_targets="replica-a=http://replica-a:8201,replica-b=http://replica-b:8202",
+        ),
+        peer_client=DirectReplicaPeerClient(network),
+    )
+    manager_b = _build_manager(
+        settings=_settings(
+            "replica-b",
+            8202,
+            peer_targets="replica-a=http://replica-a:8201,replica-b=http://replica-b:8202",
+        ),
+        peer_client=DirectReplicaPeerClient(network),
+    )
+    network.update(
+        {
+            "http://replica-a:8201": manager_a,
+            "http://replica-b:8202": manager_b,
+        }
+    )
+
+    status_a_before = manager_a.coordination_status()
+    status_b_before = manager_b.coordination_status()
+
+    manager_b.write_cache(
+        {"prompt": "handoff check", "response_text": "token moved", "model_id": "demo"}
+    )
+
+    status_a_after = manager_a.coordination_status()
+    status_b_after = manager_b.coordination_status()
+
+    assert status_a_before["has_token"] is True
+    assert status_b_before["has_token"] is False
+    assert status_a_after["has_token"] is False
+    assert status_b_after["has_token"] is True
+    assert status_b_after["local_write_active"] is False
+
+
 def test_replica_write_replicates_to_all_peers() -> None:
     network: dict[str, ReplicaManager] = {}
     managers = [

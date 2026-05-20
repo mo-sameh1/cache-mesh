@@ -68,6 +68,19 @@ class RicartAgrawalaTokenCoordinator:
         with self._condition:
             return self._has_token
 
+    def status_snapshot(self) -> dict[str, object]:
+        with self._condition:
+            return {
+                "has_token": self._has_token,
+                "local_write_active": self._local_write_active,
+                "remote_writers": sorted(self._remote_writers),
+                "active_reader_count": self._active_readers,
+                "requesting_local": self._requesting_local,
+                "local_request_seq": self._local_request_seq,
+                "token_queue": list(self._token.queue) if self._token is not None else [],
+                "token_version": self._token.version if self._token is not None else None,
+            }
+
     def acquire_read(self) -> None:
         with self._condition:
             while self._local_write_active or self._remote_writers:

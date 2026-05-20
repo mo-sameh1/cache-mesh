@@ -58,6 +58,19 @@ class CacheReadResponse(ContractResponse):
     score: Optional[float] = None
 
 
+class CoordinationStatusResponse(ContractResponse):
+    replica_id: str
+    has_token: bool
+    local_write_active: bool
+    remote_writers: List[str] = Field(default_factory=list)
+    active_reader_count: int = 0
+    requesting_local: bool = False
+    local_request_seq: int = 0
+    token_queue: List[str] = Field(default_factory=list)
+    token_version: Optional[int] = None
+    pending_token_transfer_to: Optional[str] = None
+
+
 class FaultInjectionRequest(BaseModel):
     mode: str = "disabled"
     duration_sec: int = 10
