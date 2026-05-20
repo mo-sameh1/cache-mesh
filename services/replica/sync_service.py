@@ -9,7 +9,23 @@ class SyncService:
 
     def __init__(self) -> None:
         self._write_log: List[dict] = []
+        self._write_keys: set[tuple[str | None, int, str, str]] = set()
         self._snapshots: Dict[str, List[dict]] = {}
+
+    def _write_key(self, entry: dict) -> tuple[str | None, int, str, str]:
+        return (
+            entry.get("replica_origin"),
+            int(entry["lamport_ts"]),
+            entry["model_id"],
+            entry["prompt"],
+        )
+
+    def _append_if_new(self, entry: dict) -> None:
+        key = self._write_key(entry)
+        if key in self._write_keys:
+            return
+        self._write_keys.add(key)
+        self._write_log.append(entry)
 
     def record_write(
         self,
@@ -19,7 +35,7 @@ class SyncService:
         vector: list[float] | None = None,
         replica_origin: str | None = None,
     ) -> None:
-        self._write_log.append(
+        self._append_if_new(
             {
                 "prompt": payload["prompt"],
                 "response_text": payload["response_text"],
@@ -29,6 +45,16 @@ class SyncService:
                 "replica_origin": replica_origin,
             }
         )
+
+    def record_replay_entry(self, entry: dict) -> None:
+        self._append_if_new({
+            "prompt": entry["prompt"],
+            "response_text": entry["response_text"],
+            "model_id": entry["model_id"],
+            "lamport_ts": entry["lamport_ts"],
+            "vector": entry.get("vector", []),
+            "replica_origin": entry.get("replica_origin"),
+        })
 
     def snapshot(self, payload: dict) -> dict:
         since: Optional[int] = payload.get("since_lamport_ts")

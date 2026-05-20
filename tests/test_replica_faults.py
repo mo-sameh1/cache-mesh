@@ -108,3 +108,34 @@ def test_sync_routes_are_affected_by_fault_state() -> None:
 
         response = client.post("/sync/snapshot", json={"replica_id": "replica-a"})
         assert response.status_code == 503
+
+
+def test_error_response_fault_returns_503_on_cache_write() -> None:
+    manager = _build_replica_manager()
+    with TestClient(create_replica_app(replica_manager=manager)) as client:
+        client.post("/admin/faults", json={"mode": "error_response", "duration_sec": 10, "once": True})
+
+        response = client.post("/cache/write", json={"prompt": "hello", "response_text": "world", "model_id": "demo"})
+        assert response.status_code == 503
+        assert "Fault injection" in response.json()["detail"]
+
+
+def test_slow_response_fault_delays_cache_write() -> None:
+    manager = _build_replica_manager()
+    with patch("services.replica.fault_service.time.sleep") as sleep_mock:
+        with TestClient(create_replica_app(replica_manager=manager)) as client:
+            client.post("/admin/faults", json={"mode": "slow_response", "duration_sec": 3, "once": True})
+            response = client.post("/cache/write", json={"prompt": "hello", "response_text": "world", "model_id": "demo"})
+
+            assert response.status_code == 200
+            sleep_mock.assert_called_once_with(2)
+
+
+def test_error_response_fault_returns_503_on_sync_replay() -> None:
+    manager = _build_replica_manager()
+    with TestClient(create_replica_app(replica_manager=manager)) as client:
+        client.post("/admin/faults", json={"mode": "error_response", "duration_sec": 10, "once": True})
+
+        response = client.post("/sync/replay", json={"replica_id": "replica-a", "snapshot_id": "does-not-exist", "operation_count": 0})
+        assert response.status_code == 503
+        assert "Fault injection" in response.json()["detail"]

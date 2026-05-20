@@ -97,3 +97,66 @@ def test_replay_preserves_overwrite_ordering() -> None:
     result = manager_b.read_cache({"prompt": "unique prompt", "model_id": "demo"})
     assert result["hit"] is True
     assert result["response_text"] == "second"
+
+
+def test_sync_replay_route_accepts_snapshot_id_and_replays_state() -> None:
+    manager = _build_replica_manager("replica-a", 8201)
+    with TestClient(create_replica_app(replica_manager=manager)) as client:
+        write_response = client.post(
+            "/cache/write",
+            json={"prompt": "recover prompt", "response_text": "recover it", "model_id": "demo"},
+        )
+        assert write_response.status_code == 200
+
+        snapshot_response = client.post("/sync/snapshot", json={"replica_id": "replica-a"})
+        assert snapshot_response.status_code == 200
+        snapshot_id = snapshot_response.json()["snapshot_id"]
+
+        replay_response = client.post(
+            "/sync/replay",
+            json={"replica_id": "replica-a", "snapshot_id": snapshot_id, "operation_count": 1},
+        )
+        assert replay_response.status_code == 200
+        assert replay_response.json()["accepted"] is True
+        assert replay_response.json()["replayed_operations"] == 1
+
+
+def test_sync_replay_snapshot_not_found_returns_unavailable() -> None:
+    manager = _build_replica_manager("replica-a", 8201)
+    with TestClient(create_replica_app(replica_manager=manager)) as client:
+        response = client.post(
+            "/sync/replay",
+            json={"replica_id": "replica-a", "snapshot_id": "missing-snapshot-id", "operation_count": 0},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["accepted"] is False
+        assert response.json()["status"] == "unavailable"
+
+
+def test_replayed_state_becomes_part_of_future_snapshots() -> None:
+    manager_a = _build_replica_manager("replica-a", 8201)
+    with TestClient(create_replica_app(replica_manager=manager_a)) as client_a:
+        client_a.post(
+            "/cache/write",
+            json={"prompt": "shared prompt", "response_text": "shared value", "model_id": "demo"},
+        )
+        snapshot_response = client_a.post("/sync/snapshot", json={"replica_id": "replica-a"})
+        snapshot_id = snapshot_response.json()["snapshot_id"]
+
+    manager_b = _build_replica_manager("replica-b", 8202)
+    manager_b.sync_service._snapshots[snapshot_id] = list(manager_a.sync_service._snapshots[snapshot_id])
+    replay_response = manager_b.replay({"replica_id": "replica-b", "snapshot_id": snapshot_id, "operation_count": 1})
+    assert replay_response["accepted"] is True
+
+    manager_b_snapshot = manager_b.sync_service.snapshot({"replica_id": "replica-b"})
+    assert len(manager_b_snapshot["snapshot_id"]) > 0
+    assert len(manager_b.sync_service._snapshots[manager_b_snapshot["snapshot_id"]]) == 1
+
+    manager_c = _build_replica_manager("replica-c", 8203)
+    manager_c.sync_service._snapshots[manager_b_snapshot["snapshot_id"]] = list(manager_b.sync_service._snapshots[manager_b_snapshot["snapshot_id"]])
+    replay_response_c = manager_c.replay({"replica_id": "replica-c", "snapshot_id": manager_b_snapshot["snapshot_id"], "operation_count": 1})
+    assert replay_response_c["accepted"] is True
+    cache_hit = manager_c.read_cache({"prompt": "shared prompt", "model_id": "demo"})
+    assert cache_hit["hit"] is True
+    assert cache_hit["response_text"] == "shared value"

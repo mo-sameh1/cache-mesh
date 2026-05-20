@@ -206,6 +206,7 @@ class ReplicaManager:
                 vector=entry["vector"],
                 replica_origin=entry.get("replica_origin"),
             )
+            self.sync_service.record_replay_entry(entry)
         return result
 
     def arm_fault(self, payload: dict) -> dict:
@@ -240,6 +241,12 @@ class ReplicaManager:
         self.clock.update(payload["lamport_ts"])
         self.cache_service.apply_write(
             payload,
+            lamport_ts=payload["lamport_ts"],
+            vector=payload["vector"],
+            replica_origin=payload["source_replica_id"],
+        )
+        self.sync_service.record_write(
+            payload=payload,
             lamport_ts=payload["lamport_ts"],
             vector=payload["vector"],
             replica_origin=payload["source_replica_id"],
