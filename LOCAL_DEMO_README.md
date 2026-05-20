@@ -170,39 +170,7 @@ replica-b: localhost:8202, qdrant: localhost:6335
 replica-c: localhost:8203, qdrant: localhost:6336
 ```
 
-## 7. Do I Need Multiple Terminals?
-
-No. One PowerShell terminal is enough to start, verify, demo, and shut down everything.
-
-Multiple terminals are optional if you want live logs while presenting:
-
-Terminal 1:
-
-```powershell
-docker compose --env-file .env.demo-core -p cachemesh-core logs -f
-```
-
-Terminal 2:
-
-```powershell
-docker compose --env-file .env.demo-replica-a -p cachemesh-replica-a logs -f
-```
-
-Terminal 3:
-
-```powershell
-docker compose --env-file .env.demo-replica-b -p cachemesh-replica-b logs -f
-```
-
-Terminal 4:
-
-```powershell
-docker compose --env-file .env.demo-replica-c -p cachemesh-replica-c logs -f
-```
-
-For a clean presentation, use one terminal for commands and optionally one extra terminal for gateway or replica logs.
-
-## 8. Verify The System Is Up
+## 7. Verify The System Is Up
 
 Check the containers:
 
@@ -266,7 +234,7 @@ If it says `degraded`, inspect logs:
 docker compose --env-file .env.demo-core.real -p cachemesh-core logs -f inference-adapter
 ```
 
-## 9. Use The Demo Console
+## 8. Use The Demo Console
 
 The browser dashboard lives in `apps/ui`.
 
@@ -291,7 +259,7 @@ http://localhost:3000
 
 The console can submit prompts through the gateway, show cache hit/miss status, show the selected replica, poll name-service membership, poll per-replica `/coordination`, run direct reads against all replicas, call fault injection, and show raw JSON evidence for the demo.
 
-## 10. Run The Demo Query
+## 9. Run The Demo Query
 
 The browser URL `http://localhost:8000/cache/query` is not enough by itself because `/cache/query` is a POST endpoint. Use PowerShell or curl to send JSON.
 
@@ -334,7 +302,7 @@ detail: cache hit returned by replica
 
 This proves the second request did not need inference.
 
-## 11. Prove Replication Worked
+## 10. Prove Replication Worked
 
 After the first successful query, all three replicas should have the cached response.
 
@@ -361,20 +329,7 @@ score: 1.0
 
 In `real` mode, all three replicas should return the real generated response text from the first query.
 
-## 12. What To Say During The Demo
-
-Use this explanation:
-
-1. The name service tracks live replicas through registration and heartbeat.
-2. The gateway receives the client request.
-3. The first request checks replicas and misses the cache.
-4. The gateway calls the inference adapter.
-5. The inference adapter returns either a stub response or a real model response, depending on the selected mode.
-6. The selected replica stores the response in its local Qdrant.
-7. The selected replica replicates the write to the other replicas.
-8. The second request hits cache and returns without calling inference again.
-
-## 13. Shut Down After The Demo
+## 11. Shut Down After The Demo
 
 Stop the local demo:
 
@@ -392,99 +347,3 @@ docker compose -p cachemesh-replica-c down
 ```
 
 If you also want to delete the cached demo data, use the clean-state commands in section 3.
-
-## 14. Troubleshooting
-
-Docker is not running:
-
-```text
-failed to connect to the docker API
-```
-
-Fix:
-
-```text
-Open Docker Desktop and wait until Docker is running.
-```
-
-Port already in use:
-
-```text
-bind: address already in use
-```
-
-Fix:
-
-```powershell
-docker ps
-```
-
-Stop the process/container using the port, or run the clean-state commands in section 3.
-
-Members list is empty:
-
-```powershell
-curl.exe http://localhost:8100/members
-```
-
-Fix:
-
-```powershell
-docker compose --env-file .env.demo-replica-a -p cachemesh-replica-a logs --tail 100
-docker compose --env-file .env.demo-replica-b -p cachemesh-replica-b logs --tail 100
-docker compose --env-file .env.demo-replica-c -p cachemesh-replica-c logs --tail 100
-```
-
-The replicas should register with `http://host.docker.internal:8100`.
-
-First query is slow:
-
-```text
-This is normal on a fresh run because Qdrant collections are created on first write.
-```
-
-Browser shows an error at `/cache/query`:
-
-```text
-This endpoint expects POST JSON. Use the PowerShell command in section 8.
-```
-
-Real inference is slow or degraded:
-
-```text
-This usually means the model is still downloading/loading, Docker lacks enough memory, CUDA is unavailable, or the machine is not strong enough for the selected model.
-```
-
-Check:
-
-```powershell
-docker compose --env-file .env.demo-core.real -p cachemesh-core logs -f inference-adapter
-```
-
-Return to reliable demo mode:
-
-```powershell
-.\scripts\stop-local-demo.ps1
-.\scripts\start-local-demo.ps1 -InferenceMode stub
-```
-
-## 15. Why This Demo Is Separate From The Three-Laptop Setup
-
-The real distributed setup uses one `.env` per laptop:
-
-```text
-Laptop A: name-service + replica-a
-Laptop B: inference-adapter + replica-b
-Laptop C: gateway + replica-c
-```
-
-The fully local demo uses four env files and four Compose project names so one laptop can pretend to be all machines at once:
-
-```text
-.env.demo-core
-.env.demo-replica-a
-.env.demo-replica-b
-.env.demo-replica-c
-```
-
-The normal three-laptop setup still uses the regular `.env` file on each machine.
