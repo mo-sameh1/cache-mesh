@@ -122,6 +122,7 @@ class SnapshotResponse(ContractResponse):
 class ReplayRequest(BaseModel):
     replica_id: str
     operation_count: int = 0
+    snapshot_id: Optional[str] = None
 
 
 class ReplayResponse(ContractResponse):

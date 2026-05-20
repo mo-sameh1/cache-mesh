@@ -1,14 +1,9 @@
 class LamportClock:
-    """Minimal Lamport clock placeholder for future distributed ordering."""
-
-    def __init__(self, initial_value: int = 0) -> None:
-        self.value = initial_value
-
-    def tick(self) -> int:
-        self.value += 1
-        return self.value
-
-    def update(self, remote_value: int) -> int:
-        self.value = max(self.value, remote_value) + 1
-        return self.value
-
+    def __init__(self):
+        self.time=0
+    def tick(self):
+        self.time+=1
+        return self.time
+    def update(self,received):
+        self.time=max(self.time,received)+1
+        return self.time

@@ -92,10 +92,12 @@ class ReplicaManager:
         }
 
     def read_cache(self, payload: dict) -> dict:
+        self.fault_service.check_and_apply()
         with self.coordinator.read_guard():
             return self.cache_service.read(payload)
 
     def write_cache(self, payload: dict) -> dict:
+        self.fault_service.check_and_apply()
         request_seq = self.coordinator.open_local_write_request()
         peers = self._peer_targets()
         started_peers: list[dict[str, str]] = []
@@ -131,6 +133,12 @@ class ReplicaManager:
                 replica_origin=self.settings.replica_id,
             )
             local_write_applied = True
+            self.sync_service.record_write(
+                payload=payload,
+                lamport_ts=lamport_ts,
+                vector=result.vector,
+                replica_origin=self.settings.replica_id,
+            )
             if self.write_delay_hook is not None:
                 self.write_delay_hook(payload)
 
@@ -179,10 +187,27 @@ class ReplicaManager:
             self._pass_token_if_needed()
 
     def snapshot(self, payload: dict) -> dict:
+        self.fault_service.check_and_apply()
         return self.sync_service.snapshot(payload)
 
     def replay(self, payload: dict) -> dict:
-        return self.sync_service.replay(payload)
+        self.fault_service.check_and_apply()
+        result = self.sync_service.replay(payload)
+        replay_entries = result.pop("_replay_entries", [])
+        for entry in replay_entries:
+            self.clock.update(entry["lamport_ts"])
+            self.cache_service.apply_write(
+                {
+                    "prompt": entry["prompt"],
+                    "response_text": entry["response_text"],
+                    "model_id": entry["model_id"],
+                },
+                lamport_ts=entry["lamport_ts"],
+                vector=entry["vector"],
+                replica_origin=entry.get("replica_origin"),
+            )
+            self.sync_service.record_replay_entry(entry)
+        return result
 
     def arm_fault(self, payload: dict) -> dict:
         return self.fault_service.arm_fault(payload)
@@ -216,6 +241,12 @@ class ReplicaManager:
         self.clock.update(payload["lamport_ts"])
         self.cache_service.apply_write(
             payload,
+            lamport_ts=payload["lamport_ts"],
+            vector=payload["vector"],
+            replica_origin=payload["source_replica_id"],
+        )
+        self.sync_service.record_write(
+            payload=payload,
             lamport_ts=payload["lamport_ts"],
             vector=payload["vector"],
             replica_origin=payload["source_replica_id"],

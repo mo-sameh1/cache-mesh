@@ -142,12 +142,18 @@ class IntegratedSystem:
         self.runtime = runtime
 
 
+def _clear_name_service_registry(app_client: TestClient, routes_module: object) -> None:
+    if hasattr(app_client.app.state, "registry"):
+        app_client.app.state.registry.members.clear()
+    if hasattr(routes_module, "registry"):
+        routes_module.registry.members.clear()
+
+
 @contextmanager
 def integrated_system() -> Iterator[IntegratedSystem]:
     import services.gateway.routes as gateway_routes
     import services.name_service.routes as name_service_routes
 
-    name_service_routes.registry.members.clear()
     runtime = TrackingRuntime()
     inference_service = InferenceService(
         settings=InferenceAdapterSettings(inference_backend="stub"),
@@ -183,6 +189,7 @@ def integrated_system() -> Iterator[IntegratedSystem]:
 
     with ExitStack() as stack:
         name_service_client = stack.enter_context(TestClient(create_name_service_app()))
+        _clear_name_service_registry(name_service_client, name_service_routes)
         inference_client = stack.enter_context(
             TestClient(create_inference_adapter_app(inference_service=inference_service))
         )
@@ -229,7 +236,8 @@ def integrated_system() -> Iterator[IntegratedSystem]:
 
         yield IntegratedSystem(gateway=gateway_client, managers=managers, runtime=runtime)
 
-    name_service_routes.registry.members.clear()
+    if hasattr(name_service_routes, "registry"):
+        _clear_name_service_registry(name_service_client, name_service_routes)
 
 
 def _replica_settings(replica_id: str, port: int) -> ReplicaSettings:
