@@ -27,7 +27,7 @@ class GatewaySettings(AppSettings):
     gateway_host: str = "0.0.0.0"
     gateway_port: int = 8000
     name_service_url: str = "http://name-service:8100"
-    inference_request_timeout_sec: float = 60.0
+    inference_request_timeout_sec: float = 180.0
     gateway_replica_targets: str = (
         "replica-a=http://replica-a:8201,"
         "replica-b=http://replica-b:8202,"
@@ -73,7 +73,8 @@ class ReplicaSettings(AppSettings):
         "replica-c=http://replica-c:8203"
     )
     initial_token_replica_id: str = "replica-a"
-    semantic_embedding_model_id: str = "sentence-transformers/all-MiniLM-L6-v2"
+    semantic_embedding_model_id: str = "sentence-transformers/all-MiniLM-L12-v2"
+    semantic_embedding_device: str = "auto"
     semantic_vector_size: int = 384
     semantic_score_threshold: float = 0.72
 

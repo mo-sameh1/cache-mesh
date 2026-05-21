@@ -21,6 +21,7 @@ class SentenceTransformerEmbedder:
     ) -> None:
         self.settings = settings or get_settings()
         self._model = model
+        self._resolved_device = "unknown"
 
     @property
     def vector_size(self) -> int:
@@ -42,13 +43,23 @@ class SentenceTransformerEmbedder:
             return self._model
 
         try:
+            import torch
             from sentence_transformers import SentenceTransformer
         except ImportError as exc:  # pragma: no cover - exercised through local dependency installation
             raise EmbeddingError(
                 "sentence-transformers is not installed. Install replica semantic dependencies before serving search."
             ) from exc
 
-        self._model = SentenceTransformer(self.settings.semantic_embedding_model_id)
+        requested_device = self.settings.semantic_embedding_device.lower().strip()
+        if requested_device == "cuda":
+            device = "cuda"
+        elif requested_device == "cpu":
+            device = "cpu"
+        else:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+
+        self._resolved_device = device
+        self._model = SentenceTransformer(self.settings.semantic_embedding_model_id, device=device)
         return self._model
 
 

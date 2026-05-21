@@ -6,6 +6,7 @@ def test_gateway_settings_defaults() -> None:
     assert settings.gateway_port == 8000
     assert settings.project_name == "CacheMesh"
     assert settings.name_service_url == "http://name-service:8100"
+    assert settings.inference_request_timeout_sec == 180.0
     assert settings.replica_urls == [
         "http://replica-a:8201",
         "http://replica-b:8202",
@@ -50,7 +51,8 @@ def test_replica_settings_from_environment(monkeypatch) -> None:
     assert settings.replica_port == 8299
     assert settings.replica_advertised_host == "replica-z.local"
     assert settings.advertised_port == 8399
-    assert settings.semantic_embedding_model_id == "sentence-transformers/all-MiniLM-L6-v2"
+    assert settings.semantic_embedding_model_id == "sentence-transformers/all-MiniLM-L12-v2"
+    assert settings.semantic_embedding_device == "auto"
     assert settings.semantic_vector_size == 384
     assert settings.initial_token_replica_id == "replica-y"
     assert settings.peer_targets == [

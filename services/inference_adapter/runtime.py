@@ -76,6 +76,7 @@ class HFTransformersRuntime:
         self._streamer_cls = None
         self._ready = False
         self._last_error: str | None = None
+        self._resolved_device = "unknown"
 
     def start(self) -> None:
         try:
@@ -93,7 +94,10 @@ class HFTransformersRuntime:
 
     def health(self) -> tuple[str, str]:
         if self._ready:
-            return "ok", f"HF transformers runtime is ready for {self.settings.inference_model_id}."
+            return (
+                "ok",
+                f"HF transformers runtime is ready for {self.settings.inference_model_id} on {self._resolved_device}.",
+            )
         if self._last_error:
             return "degraded", f"HF transformers runtime is unavailable: {self._last_error}"
         return "degraded", "HF transformers runtime has not been initialized."
@@ -174,11 +178,14 @@ class HFTransformersRuntime:
             ) from exc
 
         model_kwargs = {}
+        resolved_device = "cpu"
         if self.settings.inference_load_in_4bit and torch.cuda.is_available():
             model_kwargs["quantization_config"] = BitsAndBytesConfig(load_in_4bit=True)
             model_kwargs["device_map"] = "auto"
+            resolved_device = "cuda"
         elif torch.cuda.is_available():
             model_kwargs["device_map"] = "auto"
+            resolved_device = "cuda"
         elif self.settings.inference_device == "cpu":
             model_kwargs["device_map"] = None
 
@@ -190,6 +197,7 @@ class HFTransformersRuntime:
         self._tokenizer = tokenizer
         self._model = model
         self._streamer_cls = TextIteratorStreamer
+        self._resolved_device = resolved_device
         return tokenizer, model, TextIteratorStreamer
 
     def _ensure_loaded(self):
