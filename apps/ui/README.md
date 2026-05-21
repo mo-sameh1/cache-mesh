@@ -1,14 +1,34 @@
-# UI Placeholder
+# CacheMesh Console
 
-This folder is reserved for the future CacheMesh web UI.
+This is a static browser dashboard for the distributed CacheMesh deployment.
 
-Planned responsibilities:
+Open it after the services are running. You can either open
+`apps/ui/index.html` directly in a browser or serve the folder locally:
 
-- prompt submission
-- cache hit / miss metrics
-- replica health summary
-- failure simulation toggle
-- admin testing controls
+```powershell
+cd apps\ui
+python -m http.server 3000
+```
 
-For this scaffold phase, the UI is intentionally static and framework-free.
+If you serve it locally, open:
 
+```text
+http://localhost:3000
+```
+
+On first load, go to the **Settings** tab and set the gateway, name-service,
+inference, and replica URLs for your current three-machine deployment.
+
+The console supports:
+
+- gateway prompt queries
+- hit/miss display and selected replica display
+- direct reads from all replicas
+- name-service membership polling
+- per-replica health polling
+- per-replica `/coordination` polling
+- write token visibility
+- fault injection through the gateway
+- editable replica endpoint settings
+- environment target preview for the three-machine setup
+- snapshot/replay API calls

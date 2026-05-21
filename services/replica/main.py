@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from services.replica.config import get_settings
 from services.replica.manager import ReplicaManager
 from services.replica.routes import router
+from shared.cors import enable_demo_cors
 from shared.logging import configure_logging
 
 
@@ -29,6 +30,7 @@ def create_app(replica_manager: ReplicaManager | None = None) -> FastAPI:
         summary="CacheMesh replica scaffold",
         lifespan=lifespan,
     )
+    enable_demo_cors(app)
     app.include_router(router)
     return app
 

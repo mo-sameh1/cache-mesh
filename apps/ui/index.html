@@ -2,19 +2,294 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>CacheMesh UI Placeholder</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CacheMesh Demo Console</title>
+  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <main>
-    <h1>CacheMesh UI Placeholder</h1>
-    <p>This static page marks where the future team UI will live.</p>
-    <ul>
-      <li>Prompt input</li>
-      <li>Cache hit or miss metrics</li>
-      <li>Replica health overview</li>
-      <li>Failure simulation toggle</li>
-    </ul>
-  </main>
+  <div class="app-shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Distributed cache dashboard</p>
+        <h1>CacheMesh Console</h1>
+      </div>
+      <div class="topbar-actions">
+        <span id="poll-status" class="status-pill neutral">Polling paused</span>
+        <button id="refresh-now" class="icon-button" type="button" title="Refresh status" aria-label="Refresh status">Go</button>
+      </div>
+    </header>
+
+    <nav class="tabbar" aria-label="Dashboard sections">
+      <button class="tab-button active" type="button" data-tab="overview">Overview</button>
+      <button class="tab-button" type="button" data-tab="query">Query</button>
+      <button class="tab-button" type="button" data-tab="failure">Failures</button>
+      <button class="tab-button" type="button" data-tab="sync">Sync</button>
+      <button class="tab-button" type="button" data-tab="settings">Settings</button>
+    </nav>
+
+    <main>
+      <section id="overview" class="tab-panel active">
+        <div class="dashboard-grid">
+          <section class="panel wide">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Runtime</p>
+                <h2>Service Health</h2>
+              </div>
+              <span id="last-updated" class="muted">Never updated</span>
+            </div>
+            <div id="service-grid" class="service-grid"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Name service</p>
+                <h2>Membership</h2>
+              </div>
+            </div>
+            <div id="members-list" class="stack"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Mutex</p>
+                <h2>Write Token</h2>
+              </div>
+            </div>
+            <div id="token-panel" class="token-panel"></div>
+          </section>
+
+          <section class="panel wide">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Cluster</p>
+                <h2>Replica Coordination</h2>
+              </div>
+            </div>
+            <div id="replica-grid" class="replica-grid"></div>
+          </section>
+        </div>
+      </section>
+
+      <section id="query" class="tab-panel">
+        <div class="dashboard-grid">
+          <section class="panel wide">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Gateway</p>
+                <h2>Prompt Flow</h2>
+              </div>
+              <span id="query-badge" class="status-pill neutral">Ready</span>
+            </div>
+
+            <form id="query-form" class="query-form">
+              <label class="field full">
+                <span>Prompt</span>
+                <textarea id="prompt-input" rows="5" spellcheck="true">Explain distributed caching in simple terms.</textarea>
+              </label>
+              <label class="field">
+                <span>Model ID</span>
+                <input id="model-id-input" type="text" value="Qwen/Qwen2.5-7B-Instruct">
+              </label>
+              <label class="check-field">
+                <input id="semantic-enabled" type="checkbox" checked>
+                <span>Semantic lookup</span>
+              </label>
+              <div class="button-row">
+                <button type="submit" class="primary-button">Send Prompt</button>
+                <button id="send-twice" type="button" class="secondary-button">Miss Then Hit</button>
+              </div>
+            </form>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Result</p>
+                <h2>Gateway Decision</h2>
+              </div>
+            </div>
+            <div id="gateway-result" class="result-box empty">No query yet.</div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Proof</p>
+                <h2>Flow Trace</h2>
+              </div>
+            </div>
+            <ol id="flow-trace" class="flow-trace"></ol>
+          </section>
+
+          <section class="panel wide">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Replica reads</p>
+                <h2>Direct Cache Check</h2>
+              </div>
+              <button id="read-all-replicas" class="secondary-button compact" type="button">Read All</button>
+            </div>
+            <div id="direct-read-grid" class="replica-grid"></div>
+          </section>
+
+          <section class="panel wide">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Raw data</p>
+                <h2>Last Gateway JSON</h2>
+              </div>
+            </div>
+            <pre id="raw-response" class="json-box">{}</pre>
+          </section>
+        </div>
+      </section>
+
+      <section id="failure" class="tab-panel">
+        <div class="dashboard-grid">
+          <section class="panel wide">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Fault injection</p>
+                <h2>Replica Failure Controls</h2>
+              </div>
+              <span class="muted">Uses gateway /admin/faults/{replica_id}</span>
+            </div>
+            <div id="fault-grid" class="replica-grid"></div>
+          </section>
+
+          <section class="panel wide">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Evidence</p>
+                <h2>UI Event Log</h2>
+              </div>
+              <button id="clear-events" class="secondary-button compact" type="button">Clear</button>
+            </div>
+            <div id="event-log" class="event-log"></div>
+          </section>
+        </div>
+      </section>
+
+      <section id="sync" class="tab-panel">
+        <div class="dashboard-grid">
+          <section class="panel">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Snapshot</p>
+                <h2>Create Snapshot</h2>
+              </div>
+            </div>
+            <div class="form-stack">
+              <label class="field">
+                <span>Replica</span>
+                <select id="snapshot-replica"></select>
+              </label>
+              <label class="field">
+                <span>Since Lamport TS</span>
+                <input id="snapshot-since" type="number" min="0" placeholder="optional">
+              </label>
+              <button id="create-snapshot" class="primary-button" type="button">Create Snapshot</button>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Replay</p>
+                <h2>Replay Snapshot</h2>
+              </div>
+            </div>
+            <div class="form-stack">
+              <label class="field">
+                <span>Replica</span>
+                <select id="replay-replica"></select>
+              </label>
+              <label class="field">
+                <span>Snapshot ID</span>
+                <input id="replay-snapshot-id" type="text" placeholder="snapshot id">
+              </label>
+              <label class="field">
+                <span>Operation Count</span>
+                <input id="replay-count" type="number" min="0" value="1">
+              </label>
+              <button id="replay-snapshot" class="primary-button" type="button">Replay</button>
+            </div>
+          </section>
+
+          <section class="panel wide">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Raw data</p>
+                <h2>Last Sync JSON</h2>
+              </div>
+            </div>
+            <pre id="sync-response" class="json-box">{}</pre>
+          </section>
+        </div>
+      </section>
+
+      <section id="settings" class="tab-panel">
+        <div class="dashboard-grid">
+          <section class="panel">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Endpoint presets</p>
+                <h2>Connection Mode</h2>
+              </div>
+            </div>
+            <div class="segmented-control" role="group" aria-label="Deployment mode">
+              <button id="mode-local" class="segment active" type="button">Localhost Preset</button>
+              <button id="mode-three" class="segment" type="button">Three-Machine</button>
+            </div>
+          </section>
+
+          <section class="panel wide">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Endpoints</p>
+                <h2>Connection Settings</h2>
+              </div>
+              <button id="save-settings" class="primary-button compact" type="button">Save</button>
+            </div>
+            <div class="settings-grid">
+              <label class="field"><span>Gateway URL</span><input id="gateway-url" type="url"></label>
+              <label class="field"><span>Name Service URL</span><input id="name-service-url" type="url"></label>
+              <label class="field"><span>Inference URL</span><input id="inference-url" type="url"></label>
+              <label class="field"><span>Replica A URL</span><input id="replica-a-url" type="url"></label>
+              <label class="field"><span>Replica B URL</span><input id="replica-b-url" type="url"></label>
+              <label class="field"><span>Replica C URL</span><input id="replica-c-url" type="url"></label>
+            </div>
+          </section>
+
+          <section class="panel wide">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Three-machine</p>
+                <h2>Env Targets</h2>
+              </div>
+              <button class="copy-button" type="button" data-copy-target="env-output">Copy</button>
+            </div>
+            <pre id="env-output" class="json-box"></pre>
+          </section>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <template id="service-card-template">
+    <article class="status-card">
+      <div class="card-title-row">
+        <h3></h3>
+        <span class="status-dot"></span>
+      </div>
+      <p class="card-detail"></p>
+      <code class="card-url"></code>
+    </article>
+  </template>
+
+  <script src="app.js"></script>
 </body>
 </html>
-
