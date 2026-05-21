@@ -28,8 +28,15 @@ services:
       REPLICA_HOST: 0.0.0.0
       REPLICA_PORT: ${REPLICA_PORT:-8201}
       QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
+      HF_TOKEN: ${HF_TOKEN:-}
+      SENTENCE_TRANSFORMERS_HOME: /root/.cache/sentence-transformers
+      HF_HOME: /root/.cache/huggingface
+      HUGGINGFACE_HUB_CACHE: /root/.cache/huggingface/hub
     ports:
       - "${REPLICA_PORT:-8201}:${REPLICA_PORT:-8201}"
+    volumes:
+      - ./.docker/huggingface:/root/.cache/huggingface
+      - ./.docker/sentence-transformers:/root/.cache/sentence-transformers
     depends_on:
       - qdrant
     restart: unless-stopped
@@ -62,8 +69,13 @@ services:
     environment:
       ADAPTER_HOST: 0.0.0.0
       ADAPTER_PORT: ${ADAPTER_PORT:-8050}
+      HF_TOKEN: ${HF_TOKEN:-}
+      HF_HOME: /root/.cache/huggingface
+      HUGGINGFACE_HUB_CACHE: /root/.cache/huggingface/hub
     ports:
       - "${ADAPTER_PORT:-8050}:${ADAPTER_PORT:-8050}"
+    volumes:
+      - ./.docker/huggingface:/root/.cache/huggingface
     restart: unless-stopped
 
   qdrant:
