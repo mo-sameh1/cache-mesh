@@ -9,12 +9,14 @@ def test_membership_registry_thresholds_are_config_driven() -> None:
         heartbeat_interval_sec=0.1,
         suspect_after_misses=2,
         unhealthy_after_misses=4,
+        member_removal_timeout_sec=3600.0,
     )
     registry = MembershipRegistry(settings=settings)
 
     assert registry.heartbeat_interval == 0.1
     assert registry.suspect_after == 0.2
     assert registry.unhealthy_after == 0.4
+    assert registry.removal_after == 3600.0
 
 
 def test_register_marks_member_healthy_and_healthy_members_filtering() -> None:
@@ -68,3 +70,26 @@ def test_heartbeat_resets_status_to_healthy() -> None:
         monotonic.return_value = 100.42
         registry.heartbeat({"replica_id": "replica-a", "status": "healthy"})
         assert registry.list_members()["members"][0]["status"] == "healthy"
+
+
+def test_member_is_removed_after_one_hour_of_silence() -> None:
+    settings = NameServiceSettings(
+        heartbeat_interval_sec=0.1,
+        suspect_after_misses=2,
+        unhealthy_after_misses=4,
+        member_removal_timeout_sec=3600.0,
+    )
+    registry = MembershipRegistry(settings=settings)
+
+    with patch("services.name_service.registry.time.monotonic") as monotonic:
+        monotonic.return_value = 100.0
+        registry.register({"replica_id": "replica-a", "host": "a", "port": 8201})
+
+        monotonic.return_value = 3699.99
+        members = registry.list_members()
+        assert len(members["members"]) == 1
+        assert members["members"][0]["status"] == "unhealthy"
+
+        monotonic.return_value = 3700.01
+        members = registry.list_members()
+        assert members["members"] == []

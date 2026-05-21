@@ -29,6 +29,9 @@ class NameServiceClient:
     async def heartbeat(self, payload: dict[str, Any]) -> dict[str, Any]:
         return await self._request_json("POST", f"{self.base_url}/heartbeat", payload=payload)
 
+    async def list_members(self) -> dict[str, Any]:
+        return await self._request_json("GET", f"{self.base_url}/members")
+
     async def close(self) -> None:
         await self._client.aclose()
 
@@ -37,7 +40,7 @@ class NameServiceClient:
         method: str,
         url: str,
         *,
-        payload: dict[str, Any],
+        payload: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         try:
             response = await self._client.request(method, url, json=payload)
@@ -70,6 +73,9 @@ class ReplicaPeerClient:
 
     def mark_write_finished(self, replica_url: str, payload: dict[str, Any]) -> dict[str, Any]:
         return self._request("POST", f"{replica_url.rstrip('/')}/internal/locks/write-finished", payload)
+
+    def export_sync_state(self, replica_url: str, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._request("POST", f"{replica_url.rstrip('/')}/internal/sync/export", payload)
 
     def _request(self, method: str, url: str, payload: dict[str, Any]) -> dict[str, Any]:
         try:

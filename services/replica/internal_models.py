@@ -30,3 +30,8 @@ class InternalReplicatedWriteRequest(CacheWriteRequest):
     lamport_ts: int
     vector: list[float]
     source_replica_id: str
+
+
+class InternalSyncExportRequest(BaseModel):
+    replica_id: str
+    since_lamport_ts: int | None = None

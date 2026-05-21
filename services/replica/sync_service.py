@@ -56,6 +56,18 @@ class SyncService:
             "replica_origin": entry.get("replica_origin"),
         })
 
+    def latest_lamport_ts(self) -> int | None:
+        if not self._write_log:
+            return None
+        return max(int(entry["lamport_ts"]) for entry in self._write_log)
+
+    def export_entries(self, since_lamport_ts: int | None = None) -> list[dict]:
+        return [
+            dict(entry)
+            for entry in self._write_log
+            if since_lamport_ts is None or int(entry["lamport_ts"]) > since_lamport_ts
+        ]
+
     def snapshot(self, payload: dict) -> dict:
         since: Optional[int] = payload.get("since_lamport_ts")
         entries = [

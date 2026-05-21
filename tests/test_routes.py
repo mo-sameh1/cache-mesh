@@ -127,6 +127,14 @@ def test_replica_routes() -> None:
         assert snapshot_response.json()["accepted"] is True
         assert snapshot_response.json()["snapshot_id"] is not None
 
+        export_response = client.post(
+            "/internal/sync/export",
+            json={"replica_id": "replica-b", "since_lamport_ts": 0},
+        )
+        assert export_response.status_code == 200
+        assert export_response.json()["accepted"] is True
+        assert export_response.json()["operation_count"] >= 1
+
         replay_response = client.post("/sync/replay", json={"replica_id": "replica-a", "operation_count": 0})
         assert replay_response.status_code == 200
         assert replay_response.json()["replayed_operations"] == 0

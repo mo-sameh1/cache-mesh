@@ -2,6 +2,7 @@ from fastapi import APIRouter, Request
 
 from services.replica.internal_models import (
     InternalReplicatedWriteRequest,
+    InternalSyncExportRequest,
     InternalTokenRequest,
     InternalTokenTransferRequest,
     InternalWriteFinishedRequest,
@@ -88,3 +89,8 @@ def mark_write_finished(request: Request, payload: InternalWriteFinishedRequest)
 @router.post("/internal/cache/replicate")
 def replicate_cache(request: Request, payload: InternalReplicatedWriteRequest) -> dict:
     return request.app.state.replica_manager.apply_replicated_write(payload.model_dump())
+
+
+@router.post("/internal/sync/export")
+def export_sync_state(request: Request, payload: InternalSyncExportRequest) -> dict:
+    return request.app.state.replica_manager.export_internal_sync_state(payload.model_dump())

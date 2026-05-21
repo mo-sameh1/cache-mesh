@@ -68,10 +68,12 @@ class ReplicaManager:
         self._heartbeat_task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
         self._registered_with_name_service = False
+        self._bootstrap_sync_completed = False
 
     async def start(self) -> None:
         await asyncio.to_thread(self._warm_semantic_runtime)
         await self._register()
+        await self._bootstrap_sync_if_needed()
         if self._heartbeat_task is None:
             self._stop_event = asyncio.Event()
             self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
@@ -210,19 +212,7 @@ class ReplicaManager:
         self.fault_service.check_and_apply()
         result = self.sync_service.replay(payload)
         replay_entries = result.pop("_replay_entries", [])
-        for entry in replay_entries:
-            self.clock.update(entry["lamport_ts"])
-            self.cache_service.apply_write(
-                {
-                    "prompt": entry["prompt"],
-                    "response_text": entry["response_text"],
-                    "model_id": entry["model_id"],
-                },
-                lamport_ts=entry["lamport_ts"],
-                vector=entry["vector"],
-                replica_origin=entry.get("replica_origin"),
-            )
-            self.sync_service.record_replay_entry(entry)
+        self._apply_sync_entries(replay_entries)
         return result
 
     def arm_fault(self, payload: dict) -> dict:
@@ -230,6 +220,24 @@ class ReplicaManager:
 
     def describe_vector_store(self) -> dict:
         return self.vector_store.describe()
+
+    def export_internal_sync_state(self, payload: dict) -> dict:
+        since_lamport_ts = payload.get("since_lamport_ts")
+        entries = self.sync_service.export_entries(since_lamport_ts)
+        return {
+            "service": "replica",
+            "action": "sync.export",
+            "status": "ok",
+            "detail": (
+                f"Exported {len(entries)} sync entr"
+                f"{'y' if len(entries) == 1 else 'ies'} for {payload['replica_id']!r}."
+            ),
+            "accepted": True,
+            "source_replica_id": self.settings.replica_id,
+            "since_lamport_ts": since_lamport_ts,
+            "operation_count": len(entries),
+            "entries": entries,
+        }
 
     def request_internal_token(self, payload: dict) -> dict:
         response = self.coordinator.note_remote_token_request(payload["replica_id"], payload["request_seq"])
@@ -300,6 +308,7 @@ class ReplicaManager:
                 await asyncio.sleep(interval)
                 if not self._registered_with_name_service:
                     await self._register()
+                    await self._bootstrap_sync_if_needed()
                     continue
 
                 response = await self.name_service_client.heartbeat(
@@ -311,6 +320,9 @@ class ReplicaManager:
                 member = response.get("member") or {}
                 if self._member_registration_drifted(member):
                     await self._register()
+                    await self._bootstrap_sync_if_needed()
+                    continue
+                await self._bootstrap_sync_if_needed()
             except asyncio.CancelledError:
                 raise
             except NameServiceClientError as exc:
@@ -333,6 +345,73 @@ class ReplicaManager:
     def _warm_semantic_runtime(self) -> None:
         logger.info("Prewarming replica semantic runtime for %s.", self.settings.replica_id)
         self.cache_service.prepare_vector("CacheMesh startup semantic warmup.")
+
+    async def _bootstrap_sync_if_needed(self) -> None:
+        if self._bootstrap_sync_completed or not self._registered_with_name_service:
+            return
+        if not hasattr(self.name_service_client, "list_members"):
+            self._bootstrap_sync_completed = True
+            return
+
+        try:
+            response = await self.name_service_client.list_members()
+        except NameServiceClientError as exc:
+            logger.warning("Replica bootstrap sync could not list members: %s", exc)
+            return
+
+        candidates = [
+            {
+                "replica_id": member["replica_id"],
+                "url": f"http://{member['host']}:{member['port']}",
+            }
+            for member in response.get("members", [])
+            if member.get("replica_id") != self.settings.replica_id
+            and member.get("status") == "healthy"
+            and member.get("host")
+            and int(member.get("port") or 0) > 0
+        ]
+        if not candidates:
+            return
+
+        synced = await asyncio.to_thread(self._bootstrap_sync_from_candidates, candidates)
+        if synced:
+            self._bootstrap_sync_completed = True
+
+    def _bootstrap_sync_from_candidates(self, candidates: list[dict[str, str]]) -> bool:
+        if not hasattr(self.peer_client, "export_sync_state"):
+            return False
+        since_lamport_ts = self.sync_service.latest_lamport_ts()
+        for candidate in candidates:
+            try:
+                response = self.peer_client.export_sync_state(
+                    candidate["url"],
+                    {
+                        "replica_id": self.settings.replica_id,
+                        "since_lamport_ts": since_lamport_ts,
+                    },
+                )
+            except ReplicaPeerClientError as exc:
+                logger.warning("Replica bootstrap sync from %s failed: %s", candidate["replica_id"], exc)
+                continue
+
+            self._apply_sync_entries(response.get("entries", []))
+            return True
+        return False
+
+    def _apply_sync_entries(self, entries: list[dict]) -> None:
+        for entry in sorted(entries, key=lambda item: int(item["lamport_ts"])):
+            self.clock.update(entry["lamport_ts"])
+            self.cache_service.apply_write(
+                {
+                    "prompt": entry["prompt"],
+                    "response_text": entry["response_text"],
+                    "model_id": entry["model_id"],
+                },
+                lamport_ts=entry["lamport_ts"],
+                vector=entry["vector"],
+                replica_origin=entry.get("replica_origin"),
+            )
+            self.sync_service.record_replay_entry(entry)
 
     def _release_remote_writers(self, peers: list[dict[str, str]], write_id: str) -> None:
         for peer in reversed(peers):

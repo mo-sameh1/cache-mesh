@@ -56,6 +56,7 @@ class GatewaySettings(AppSettings):
 class NameServiceSettings(AppSettings):
     name_service_host: str = "0.0.0.0"
     name_service_port: int = 8100
+    member_removal_timeout_sec: float = 3600.0
 
 
 class ReplicaSettings(AppSettings):

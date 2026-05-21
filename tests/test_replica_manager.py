@@ -42,6 +42,15 @@ class RecordingNameServiceClient:
         member = self.heartbeat_member_override or payload
         return {"accepted": True, "member": member}
 
+    async def list_members(self) -> dict:
+        return {
+            "service": "name-service",
+            "action": "members",
+            "status": "ok",
+            "detail": "0 member(s) returned.",
+            "members": [],
+        }
+
     async def close(self) -> None:
         self.closed = True
 
@@ -74,6 +83,9 @@ class DirectReplicaPeerClient:
 
     def mark_write_finished(self, replica_url: str, payload: dict) -> dict:
         return self._target(replica_url).mark_internal_write_finished(payload)
+
+    def export_sync_state(self, replica_url: str, payload: dict) -> dict:
+        return self._target(replica_url).export_internal_sync_state(payload)
 
     def _target(self, replica_url: str) -> ReplicaManager:
         manager = self.network.get(replica_url)
@@ -140,6 +152,21 @@ class LostTokenTransferResponsePeerClient(DirectReplicaPeerClient):
             self._raised = True
             raise ReplicaPeerClientError(f"lost token transfer response for {replica_url}")
         return response
+
+
+class BootstrapNameServiceClient(RecordingNameServiceClient):
+    def __init__(self, members: list[dict]) -> None:
+        super().__init__()
+        self.members = members
+
+    async def list_members(self) -> dict:
+        return {
+            "service": "name-service",
+            "action": "members",
+            "status": "ok",
+            "detail": f"{len(self.members)} member(s) returned.",
+            "members": list(self.members),
+        }
 
 
 def test_replica_registers_on_startup() -> None:
@@ -277,6 +304,47 @@ def test_replica_overwrite_model_isolation_and_semantic_hits() -> None:
     assert semantic_hit["response_text"] == "Use flour, water, yeast, and patience."
     assert semantic_hit["score"] is not None
     assert miss["hit"] is False
+
+
+def test_replica_bootstrap_syncs_from_existing_healthy_peer_on_startup() -> None:
+    network: dict[str, ReplicaManager] = {}
+    manager_a = _build_manager(
+        settings=_settings(
+            "replica-a",
+            8201,
+            peer_targets="replica-a=http://replica-a:8201",
+        ),
+        peer_client=DirectReplicaPeerClient(network),
+    )
+    network["http://replica-a:8201"] = manager_a
+
+    write_response = manager_a.write_cache(
+        {"prompt": "late join bootstrap", "response_text": "copied from peer", "model_id": "demo"}
+    )
+    assert write_response["stored"] is True
+
+    members = [
+        {"replica_id": "replica-a", "host": "replica-a", "port": 8201, "status": "healthy"},
+        {"replica_id": "replica-b", "host": "replica-b", "port": 8202, "status": "healthy"},
+    ]
+    manager_b = _build_manager(
+        settings=_settings(
+            "replica-b",
+            8202,
+            peer_targets="replica-a=http://replica-a:8201,replica-b=http://replica-b:8202",
+        ),
+        name_service_client=BootstrapNameServiceClient(members),
+        peer_client=DirectReplicaPeerClient(network),
+    )
+    network["http://replica-b:8202"] = manager_b
+
+    with TestClient(create_replica_app(replica_manager=manager_b)):
+        bootstrap_hit = manager_b.read_cache(
+            {"prompt": "late join bootstrap", "model_id": "demo", "semantic_enabled": True}
+        )
+
+    assert bootstrap_hit["hit"] is True
+    assert bootstrap_hit["response_text"] == "copied from peer"
 
 
 def test_coordination_status_reports_token_holder_state() -> None:

@@ -32,6 +32,7 @@ class MembershipRegistry:
         self.heartbeat_interval = settings.heartbeat_interval_sec
         self.suspect_after = self.heartbeat_interval * settings.suspect_after_misses
         self.unhealthy_after = self.heartbeat_interval * settings.unhealthy_after_misses
+        self.removal_after = settings.member_removal_timeout_sec
         # replica_id → {replica_id, host, port, last_heartbeat}
         self._members: Dict[str, dict] = {}
 
@@ -53,12 +54,22 @@ class MembershipRegistry:
             "status": _compute_status(raw["last_heartbeat"], t, self.suspect_after, self.unhealthy_after),
         }
 
+    def _prune_expired_members(self, now: float, *, exclude_replica_id: str | None = None) -> None:
+        expired_members = [
+            replica_id
+            for replica_id, raw in self._members.items()
+            if replica_id != exclude_replica_id and now - raw["last_heartbeat"] >= self.removal_after
+        ]
+        for replica_id in expired_members:
+            self._members.pop(replica_id, None)
+
     # ------------------------------------------------------------------
     # public API
 
     def register(self, payload: dict) -> dict:
         replica_id = payload["replica_id"]
         now = time.monotonic()
+        self._prune_expired_members(now, exclude_replica_id=replica_id)
         self._members[replica_id] = {
             "replica_id": replica_id,
             "host": payload.get("host", "unknown"),
@@ -78,6 +89,7 @@ class MembershipRegistry:
     def heartbeat(self, payload: dict) -> dict:
         replica_id = payload["replica_id"]
         now = time.monotonic()
+        self._prune_expired_members(now, exclude_replica_id=replica_id)
         if replica_id not in self._members:
             # Auto-register unknown replicas that heartbeat before /register.
             self._members[replica_id] = {
@@ -100,6 +112,7 @@ class MembershipRegistry:
 
     def list_members(self, *, healthy_only: bool = False) -> dict:
         now = time.monotonic()
+        self._prune_expired_members(now)
         members = [self._public_view(rid, now) for rid in self._members]
         if healthy_only:
             members = [m for m in members if m["status"] == "healthy"]
