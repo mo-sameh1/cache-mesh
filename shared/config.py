@@ -27,6 +27,7 @@ class GatewaySettings(AppSettings):
     gateway_host: str = "0.0.0.0"
     gateway_port: int = 8000
     name_service_url: str = "http://name-service:8100"
+    inference_request_timeout_sec: float = 60.0
     gateway_replica_targets: str = (
         "replica-a=http://replica-a:8201,"
         "replica-b=http://replica-b:8202,"

@@ -20,7 +20,7 @@ class GatewayService:
         self.replica_client = replica_client or ReplicaClient(self.settings.request_timeout_sec)
         self.inference_client = inference_client or InferenceClient(
             self.settings.inference_adapter_url,
-            self.settings.request_timeout_sec,
+            self.settings.inference_request_timeout_sec,
         )
 
     def query_cache(self, payload: dict) -> dict:
