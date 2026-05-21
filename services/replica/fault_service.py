@@ -30,6 +30,9 @@ class ReplicaFaultService:
             "active_fault": current,
         }
 
+    def is_fault_active(self) -> bool:
+        return self.controller.is_active()
+
     def check_and_apply(self) -> None:
         fault = self.controller.trigger()
         if fault is None:

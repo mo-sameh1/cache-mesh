@@ -37,6 +37,7 @@ class ReplicaManager:
         peer_client: ReplicaPeerClient | None = None,
         coordinator: RicartAgrawalaTokenCoordinator | None = None,
         write_delay_hook: Callable[[dict], None] | None = None,
+        sync_delay_hook: Callable[[list[dict]], None] | None = None,
     ) -> None:
         self.settings = settings or get_settings()
         self.clock = LamportClock()
@@ -64,11 +65,13 @@ class ReplicaManager:
             initial_token_holder=self.settings.initial_token_replica_id,
         )
         self.write_delay_hook = write_delay_hook
+        self.sync_delay_hook = sync_delay_hook
         self._pending_token_transfer: tuple[str, dict[str, object]] | None = None
         self._heartbeat_task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
         self._registered_with_name_service = False
         self._bootstrap_sync_completed = False
+        self._recovery_sync_needed = False
 
     async def start(self) -> None:
         await asyncio.to_thread(self._warm_semantic_runtime)
@@ -206,7 +209,8 @@ class ReplicaManager:
 
     def snapshot(self, payload: dict) -> dict:
         self.fault_service.check_and_apply()
-        return self.sync_service.snapshot(payload)
+        with self.coordinator.read_guard():
+            return self.sync_service.snapshot(payload)
 
     def replay(self, payload: dict) -> dict:
         self.fault_service.check_and_apply()
@@ -216,6 +220,11 @@ class ReplicaManager:
         return result
 
     def arm_fault(self, payload: dict) -> dict:
+        mode = payload.get("mode", "disabled")
+        if mode == "disabled":
+            self._recovery_sync_needed = False
+        else:
+            self._recovery_sync_needed = True
         return self.fault_service.arm_fault(payload)
 
     def describe_vector_store(self) -> dict:
@@ -223,7 +232,8 @@ class ReplicaManager:
 
     def export_internal_sync_state(self, payload: dict) -> dict:
         since_lamport_ts = payload.get("since_lamport_ts")
-        entries = self.sync_service.export_entries(since_lamport_ts)
+        with self.coordinator.read_guard():
+            entries = self.sync_service.export_entries(since_lamport_ts)
         return {
             "service": "replica",
             "action": "sync.export",
@@ -309,6 +319,7 @@ class ReplicaManager:
                 if not self._registered_with_name_service:
                     await self._register()
                     await self._bootstrap_sync_if_needed()
+                    await self._recover_from_fault_if_needed()
                     continue
 
                 response = await self.name_service_client.heartbeat(
@@ -321,8 +332,10 @@ class ReplicaManager:
                 if self._member_registration_drifted(member):
                     await self._register()
                     await self._bootstrap_sync_if_needed()
+                    await self._recover_from_fault_if_needed()
                     continue
                 await self._bootstrap_sync_if_needed()
+                await self._recover_from_fault_if_needed()
             except asyncio.CancelledError:
                 raise
             except NameServiceClientError as exc:
@@ -377,6 +390,16 @@ class ReplicaManager:
         if synced:
             self._bootstrap_sync_completed = True
 
+    async def _recover_from_fault_if_needed(self) -> None:
+        if not self._recovery_sync_needed:
+            return
+        if self.fault_service.is_fault_active():
+            return
+        self._bootstrap_sync_completed = False
+        await self._bootstrap_sync_if_needed()
+        if self._bootstrap_sync_completed:
+            self._recovery_sync_needed = False
+
     def _bootstrap_sync_from_candidates(self, candidates: list[dict[str, str]]) -> bool:
         if not hasattr(self.peer_client, "export_sync_state"):
             return False
@@ -399,19 +422,28 @@ class ReplicaManager:
         return False
 
     def _apply_sync_entries(self, entries: list[dict]) -> None:
-        for entry in sorted(entries, key=lambda item: int(item["lamport_ts"])):
-            self.clock.update(entry["lamport_ts"])
-            self.cache_service.apply_write(
-                {
-                    "prompt": entry["prompt"],
-                    "response_text": entry["response_text"],
-                    "model_id": entry["model_id"],
-                },
-                lamport_ts=entry["lamport_ts"],
-                vector=entry["vector"],
-                replica_origin=entry.get("replica_origin"),
-            )
-            self.sync_service.record_replay_entry(entry)
+        sorted_entries = sorted(entries, key=lambda item: int(item["lamport_ts"]))
+        if not sorted_entries:
+            return
+
+        source_replica_id = sorted_entries[0].get("replica_origin") or "sync-replay"
+        sync_id = f"sync-{self.settings.replica_id}-{uuid4()}"
+        with self.coordinator.sync_apply_guard(str(source_replica_id), sync_id):
+            for entry in sorted_entries:
+                self.clock.update(entry["lamport_ts"])
+                self.cache_service.apply_write(
+                    {
+                        "prompt": entry["prompt"],
+                        "response_text": entry["response_text"],
+                        "model_id": entry["model_id"],
+                    },
+                    lamport_ts=entry["lamport_ts"],
+                    vector=entry["vector"],
+                    replica_origin=entry.get("replica_origin"),
+                )
+                self.sync_service.record_replay_entry(entry)
+            if self.sync_delay_hook is not None:
+                self.sync_delay_hook(sorted_entries)
 
     def _release_remote_writers(self, peers: list[dict[str, str]], write_id: str) -> None:
         for peer in reversed(peers):

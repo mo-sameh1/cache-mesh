@@ -1,3 +1,6 @@
+import threading
+import time
+
 from fastapi.testclient import TestClient
 
 from services.replica.clients import ReplicaPeerClient
@@ -21,7 +24,13 @@ class NoOpAsyncNameServiceClient:
         return None
 
 
-def _build_replica_manager(replica_id: str, port: int) -> ReplicaManager:
+def _build_replica_manager(
+    replica_id: str,
+    port: int,
+    *,
+    write_delay_hook=None,
+    sync_delay_hook=None,
+) -> ReplicaManager:
     settings = ReplicaSettings(
         replica_id=replica_id,
         replica_advertised_host=replica_id,
@@ -38,6 +47,8 @@ def _build_replica_manager(replica_id: str, port: int) -> ReplicaManager:
         name_service_client=NoOpAsyncNameServiceClient(),
         vector_store=vector_store,
         peer_client=ReplicaPeerClient(timeout_sec=2.0, transport=None),
+        write_delay_hook=write_delay_hook,
+        sync_delay_hook=sync_delay_hook,
     )
 
 
@@ -160,3 +171,98 @@ def test_replayed_state_becomes_part_of_future_snapshots() -> None:
     cache_hit = manager_c.read_cache({"prompt": "shared prompt", "model_id": "demo"})
     assert cache_hit["hit"] is True
     assert cache_hit["response_text"] == "shared value"
+
+
+def test_snapshot_waits_for_active_write_to_finish() -> None:
+    delay_started = threading.Event()
+    release_write = threading.Event()
+    writer_result: dict = {}
+    snapshot_result: dict = {}
+
+    def delay_hook(_: dict) -> None:
+        delay_started.set()
+        assert release_write.wait(timeout=10)
+
+    manager = _build_replica_manager("replica-a", 8201, write_delay_hook=delay_hook)
+
+    with TestClient(create_replica_app(replica_manager=manager)):
+        def run_write() -> None:
+            writer_result["response"] = manager.write_cache(
+                {"prompt": "snapshot consistency", "response_text": "written first", "model_id": "demo"}
+            )
+
+        def run_snapshot() -> None:
+            snapshot_result["response"] = manager.snapshot({"replica_id": "replica-a"})
+
+        writer = threading.Thread(target=run_write)
+        writer.start()
+        assert delay_started.wait(timeout=5)
+
+        snapshot_started = time.monotonic()
+        snapshot_thread = threading.Thread(target=run_snapshot)
+        snapshot_thread.start()
+        time.sleep(0.2)
+        assert snapshot_thread.is_alive() is True
+
+        release_write.set()
+        writer.join(timeout=10)
+        snapshot_thread.join(timeout=10)
+        elapsed = time.monotonic() - snapshot_started
+
+    assert writer_result["response"]["stored"] is True
+    assert snapshot_result["response"]["accepted"] is True
+    assert len(manager.sync_service._snapshots[snapshot_result["response"]["snapshot_id"]]) == 1
+    assert elapsed >= 0.15
+
+
+def test_replay_blocks_reads_until_sync_apply_finishes() -> None:
+    sync_started = threading.Event()
+    release_sync = threading.Event()
+    replay_result: dict = {}
+    read_result: dict = {}
+
+    def sync_delay_hook(_: list[dict]) -> None:
+        sync_started.set()
+        assert release_sync.wait(timeout=10)
+
+    manager_a = _build_replica_manager("replica-a", 8201)
+    with TestClient(create_replica_app(replica_manager=manager_a)) as client_a:
+        client_a.post(
+            "/cache/write",
+            json={"prompt": "replay blocking", "response_text": "arrives after sync", "model_id": "demo"},
+        )
+        snapshot_response = manager_a.sync_service.snapshot({"replica_id": "replica-a"})
+        snapshot_id = snapshot_response["snapshot_id"]
+
+    manager_b = _build_replica_manager("replica-b", 8202, sync_delay_hook=sync_delay_hook)
+    manager_b.sync_service._snapshots[snapshot_id] = list(manager_a.sync_service._snapshots[snapshot_id])
+
+    def run_replay() -> None:
+        replay_result["response"] = manager_b.replay(
+            {"replica_id": "replica-b", "snapshot_id": snapshot_id, "operation_count": 1}
+        )
+
+    def run_read() -> None:
+        read_result["response"] = manager_b.read_cache(
+            {"prompt": "replay blocking", "model_id": "demo", "semantic_enabled": True}
+        )
+
+    replay_thread = threading.Thread(target=run_replay)
+    replay_thread.start()
+    assert sync_started.wait(timeout=5)
+
+    read_started = time.monotonic()
+    reader = threading.Thread(target=run_read)
+    reader.start()
+    time.sleep(0.2)
+    assert reader.is_alive() is True
+
+    release_sync.set()
+    replay_thread.join(timeout=10)
+    reader.join(timeout=10)
+    elapsed = time.monotonic() - read_started
+
+    assert replay_result["response"]["accepted"] is True
+    assert read_result["response"]["hit"] is True
+    assert read_result["response"]["response_text"] == "arrives after sync"
+    assert elapsed >= 0.15

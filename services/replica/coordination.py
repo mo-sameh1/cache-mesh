@@ -63,6 +63,14 @@ class RicartAgrawalaTokenCoordinator:
         finally:
             self.release_read()
 
+    @contextmanager
+    def sync_apply_guard(self, source_replica_id: str, sync_id: str) -> Iterator[None]:
+        self.begin_sync_apply(source_replica_id, sync_id)
+        try:
+            yield
+        finally:
+            self.finish_sync_apply(source_replica_id, sync_id)
+
     @property
     def has_token(self) -> bool:
         with self._condition:
@@ -249,6 +257,20 @@ class RicartAgrawalaTokenCoordinator:
             self._remote_writers.discard(active_replica_id or replica_id)
             self._condition.notify_all()
             return {"accepted": True}
+
+    def begin_sync_apply(self, source_replica_id: str, sync_id: str) -> None:
+        with self._condition:
+            while self._active_readers > 0 or self._local_write_active or self._remote_writers:
+                self._condition.wait()
+            self._remote_writers.add(source_replica_id)
+            self._remote_writer_ids[sync_id] = source_replica_id
+            self._condition.notify_all()
+
+    def finish_sync_apply(self, source_replica_id: str, sync_id: str) -> None:
+        with self._condition:
+            active_replica_id = self._remote_writer_ids.pop(sync_id, None)
+            self._remote_writers.discard(active_replica_id or source_replica_id)
+            self._condition.notify_all()
 
     def _refresh_waiting_queue_locked(self) -> None:
         if self._token is None:

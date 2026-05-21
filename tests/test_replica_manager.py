@@ -347,6 +347,77 @@ def test_replica_bootstrap_syncs_from_existing_healthy_peer_on_startup() -> None
     assert bootstrap_hit["response_text"] == "copied from peer"
 
 
+def test_replica_replays_missing_state_after_fault_recovers() -> None:
+    network: dict[str, ReplicaManager] = {}
+    manager_a = _build_manager(
+        settings=_settings(
+            "replica-a",
+            8201,
+            peer_targets="replica-a=http://replica-a:8201,replica-b=http://replica-b:8202",
+        ),
+        peer_client=FailingReplicationPeerClient(network, "http://replica-b:8202"),
+    )
+    members = [
+        {"replica_id": "replica-a", "host": "replica-a", "port": 8201, "status": "healthy"},
+        {"replica_id": "replica-b", "host": "replica-b", "port": 8202, "status": "healthy"},
+    ]
+    name_service_b = BootstrapNameServiceClient(members)
+    name_service_b.heartbeat_member_override = {
+        "replica_id": "replica-b",
+        "host": "replica-b",
+        "port": 8202,
+    }
+    manager_b = _build_manager(
+        settings=ReplicaSettings(
+            replica_id="replica-b",
+            replica_advertised_host="replica-b",
+            replica_advertised_port=8202,
+            qdrant_url="http://qdrant-b:6333",
+            heartbeat_interval_sec=0.01,
+            replica_peer_targets="replica-a=http://replica-a:8201,replica-b=http://replica-b:8202",
+            initial_token_replica_id="replica-a",
+            semantic_score_threshold=0.18,
+        ),
+        name_service_client=name_service_b,
+        peer_client=DirectReplicaPeerClient(network),
+    )
+    network.update(
+        {
+            "http://replica-a:8201": manager_a,
+            "http://replica-b:8202": manager_b,
+        }
+    )
+
+    with TestClient(create_replica_app(replica_manager=manager_b)):
+        manager_b.arm_fault({"mode": "error_response", "duration_sec": 1, "once": False})
+        write_response = manager_a.write_cache(
+            {"prompt": "recover after fault", "response_text": "synced later", "model_id": "demo"}
+        )
+        assert write_response["status"] == "degraded"
+
+        immediate_read = manager_b.cache_service.read(
+            {"prompt": "recover after fault", "model_id": "demo", "semantic_enabled": True}
+        )
+        assert immediate_read["hit"] is False
+
+        deadline = time.monotonic() + 4.0
+        recovered_read = {"hit": False}
+        while time.monotonic() < deadline:
+            try:
+                recovered_read = manager_b.read_cache(
+                    {"prompt": "recover after fault", "model_id": "demo", "semantic_enabled": True}
+                )
+            except Exception:
+                time.sleep(0.05)
+                continue
+            if recovered_read["hit"]:
+                break
+            time.sleep(0.05)
+
+    assert recovered_read["hit"] is True
+    assert recovered_read["response_text"] == "synced later"
+
+
 def test_coordination_status_reports_token_holder_state() -> None:
     network: dict[str, ReplicaManager] = {}
     manager_a = _build_manager(
