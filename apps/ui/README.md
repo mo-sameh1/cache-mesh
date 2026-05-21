@@ -17,7 +17,8 @@ http://localhost:3000
 ```
 
 On first load, go to the **Settings** tab and set the gateway, name-service,
-inference, and replica URLs for your current three-machine deployment.
+inference, and replica URLs for your current deployment. The fields stay
+editable in both single-machine and three-machine modes.
 
 The console supports:
 

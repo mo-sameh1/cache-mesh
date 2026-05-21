@@ -466,9 +466,6 @@ async function replaySnapshot() {
 
 function applyMode(mode) {
   state.settings.deploymentMode = mode;
-  if (mode === "local") {
-    state.settings.endpoints = structuredClone(defaults.endpoints);
-  }
   saveSettings();
   renderAll();
   refreshAll();
