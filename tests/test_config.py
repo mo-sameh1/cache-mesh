@@ -70,5 +70,5 @@ def test_replica_settings_from_environment(monkeypatch) -> None:
 def test_inference_settings_defaults() -> None:
     settings = InferenceAdapterSettings()
     assert settings.inference_backend == "stub"
-    assert settings.inference_model_id == "Qwen/Qwen2.5-7B-Instruct"
+    assert settings.inference_model_id == "Qwen/Qwen3-4B-Instruct-2507"
     assert settings.inference_load_in_4bit is True
